@@ -142,10 +142,7 @@ def make_loss(network,
       in_axes=(
           None, # params
           0, # key
-          0, # pos
-          None, # spins
-          None, # atoms
-          None, # charges
+          networks.KANetsData(positions=0, spins=None, atoms=None, charges=None), # data
       ),
       out_axes=(0, 0)
   )
@@ -176,7 +173,7 @@ def make_loss(network,
       over the batch and over all devices inside a pmap.
     """
     keys = jax.random.split(key, num=data.positions.shape[0])
-    e_l, e_l_mat = batch_local_energy(params, keys, data.positions, data.spins, data.atoms, data.charges,)
+    e_l, e_l_mat = batch_local_energy(params, keys, data)
     #jax.debug.print("e_l:{}", e_l)
     #jax.debug.print("data.positions:{}", data.positions)
     loss = constants.pmean(jnp.mean(e_l))
@@ -212,17 +209,17 @@ def make_loss(network,
     # (params, rng, data)) and Laplacian calculation (only want to take
     # Laplacian wrt electron positions) we need to change up the calling
     # convention between total_energy and batch_network
-    data = primals[2]
+    # data = primals[2] #Suspected duplication
     data_tangents = tangents[2]
-    primals = (primals[0], data.positions, data.spins, data.atoms, data.charges)
-    tangents = (
+    primals_network = (primals[0], data.positions, data.spins, data.atoms, data.charges)
+    tangents_network = (
         tangents[0],
         data_tangents.positions,
         data_tangents.spins,
         data_tangents.atoms,
         data_tangents.charges,
     )
-    psi_primal, psi_tangent = jax.jvp(batch_network, primals, tangents)
+    psi_primal, psi_tangent = jax.jvp(batch_network, primals_network, tangents_network)
     if complex_output:
       clipped_el = diff + aux_data.clipped_energy
       term1 = (jnp.dot(clipped_el, jnp.conjugate(psi_tangent)) +

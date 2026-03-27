@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Sequence, Tuple, Union, Protocol, cast
 import chex
 from Kolmogorov_Arnold_QMC.kan_wavefunction_case_one import kan_networks_case_one as networks
 from GaussianNet.tools.utils import utils
@@ -6,10 +6,15 @@ import jax
 from jax import lax
 import jax.numpy as jnp
 import numpy as np
-from typing_extensions import Protocol
+import folx
 
 
 Array = Union[jnp.ndarray, np.ndarray]
+
+WaveFunctionOutput = Callable[
+    [networks.ParamTree, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray],
+    jnp.ndarray,
+]
 
 
 class LocalEnergy(Protocol):
@@ -27,6 +32,7 @@ class LocalEnergy(Protocol):
       key: JAX PRNG state.
       data: MCMC configuration to evaluate.
     """
+    ...
 
 
 class MakeLocalEnergy(Protocol):
@@ -51,6 +57,7 @@ class MakeLocalEnergy(Protocol):
       complex_output: If true, the output of f is complex-valued.
       **kwargs: additional kwargs to use for creating the specific Hamiltonian.
     """
+    ...
 
 
 KineticEnergy = Callable[
@@ -59,7 +66,7 @@ KineticEnergy = Callable[
 
 
 def local_kinetic_energy(
-    f,
+    f: Callable[..., Any],
     use_scan: bool = False,
     complex_output: bool = False,
     laplacian_method: str = 'default',
@@ -80,34 +87,50 @@ def local_kinetic_energy(
     -1/2f \nabla^2 f = -1/2 (\nabla^2 log|f| + (\nabla log|f|)^2).
   """
 
-  phase_f = utils.select_output(f, 0)
-  logabs_f = utils.select_output(f, 1)
+  phase_f = cast(WaveFunctionOutput, utils.select_output(f, 0))
+  logabs_f = cast(WaveFunctionOutput, utils.select_output(f, 1))
 
   if laplacian_method == 'default':
 
-    def _lapl_over_f(params,
-                     pos: jnp.ndarray,
-                     spins: jnp.ndarray,
-                     atoms: jnp.ndarray,
-                     charges: jnp.ndarray,
-                     ):
-      n = pos.shape[0]
+    def _lapl_over_f(
+      params: networks.ParamTree,
+      data: networks.KANetsData,
+    ) -> jnp.ndarray:
+      n = data.positions.shape[0]
       #jax.debug.print("n:{}", n)
       eye = jnp.eye(n)
       grad_f = jax.grad(logabs_f, argnums=1)
-      def grad_f_closure(x):
-        return grad_f(params, x, spins, atoms, charges)
+      def grad_f_closure(x: jnp.ndarray) -> jnp.ndarray:
+        return grad_f(params, x, data.spins, data.atoms, data.charges)
+      primal, dgrad_f = jax.linearize(grad_f_closure, data.positions)
 
-      primal, dgrad_f = jax.linearize(grad_f_closure, pos)
       if complex_output:
-        grad_phase = jax.grad(phase_f, argnums=1)
-        def grad_phase_closure(x):
-          return grad_phase(params, x, spins, atoms, charges)
-        phase_primal, dgrad_phase = jax.linearize(
-            grad_phase_closure, pos)
+        # Modified by 2026.3.16: Apply Method 3 (chain rule on U=e^{i\theta}) to avoid branch cut jumps.
+        # [NEW CODE START: 2026.3.16 - Chain rule for continuous U]
+        def u_real_closure(x: jnp.ndarray) -> jnp.ndarray:
+            return jnp.real(phase_f(params, x, data.spins, data.atoms, data.charges))
+        def u_imag_closure(x: jnp.ndarray) -> jnp.ndarray:
+            return jnp.imag(phase_f(params, x, data.spins, data.atoms, data.charges))
+
+        grad_u_real = jax.grad(u_real_closure, argnums=0)
+        grad_u_imag = jax.grad(u_imag_closure, argnums=0)
+
+        primal_u_real, dgrad_u_real = jax.linearize(grad_u_real, data.positions)
+        primal_u_imag, dgrad_u_imag = jax.linearize(grad_u_imag, data.positions)
+
+        u_val = u_real_closure(data.positions) + 1.j * u_imag_closure(data.positions)
+        grad_u = primal_u_real + 1.j * primal_u_imag
+
+        grad_phase = -1.j * grad_u / u_val
+
+        hessian_u_diagonal = lambda i: dgrad_u_real(eye[i])[i] + 1.j * dgrad_u_imag(eye[i])[i]
+        def compute_hessian_phase_diag(i: int) -> jnp.ndarray:
+            lapl_u_i = hessian_u_diagonal(i)
+            return -1.j * (lapl_u_i / u_val - (grad_u[i] / u_val)**2)
+
         hessian_diagonal = (
-            lambda i: dgrad_f(eye[i])[i] + 1.j * dgrad_phase(eye[i])[i]
-        )
+            lambda i: dgrad_f(eye[i])[i] + 1.j * compute_hessian_phase_diag(i))
+        # [NEW CODE END: 2026.3.16]
       else:
         hessian_diagonal = lambda i: dgrad_f(eye[i])[i]
 
@@ -116,15 +139,50 @@ def local_kinetic_energy(
             lambda i, _: (i + 1, hessian_diagonal(i)), 0, None, length=n)
         result = -0.5 * jnp.sum(diagonal)
       else:
+        initial_value = jnp.asarray(0.0j if complex_output else 0.0)
         result = -0.5 * lax.fori_loop(
-            0, n, lambda i, val: val + hessian_diagonal(i), 0.0)
+            0, n, lambda i, val: val + hessian_diagonal(i), initial_value)
       result -= 0.5 * jnp.sum(primal ** 2)
+
       if complex_output:
-        result += 0.5 * jnp.sum(phase_primal ** 2)
-        result -= 1.j * jnp.sum(primal * phase_primal)
+        # Modified by 2026.3.16: Expand kinetic energy strictly using stable grad_phase        
+        # [NEW CODE START: 2026.3.16 - Energy expansion]
+        result += 0.5 * jnp.sum(grad_phase ** 2)
+        result -= 1.j * jnp.sum(primal * grad_phase)
+        # [NEW CODE END: 2026.3.16]
       return result
 
-  return _lapl_over_f
+    return _lapl_over_f
+
+  elif laplacian_method == 'folx':
+
+    def _lapl_over_f(
+        params: networks.ParamTree,
+        data: networks.KANetsData,
+    ) -> jnp.ndarray:
+      f_closure = lambda x: f(params, x, data.spins, data.atoms, data.charges)
+      f_wrapped = folx.forward_laplacian(f_closure, sparsity_threshold=0)
+      output = f_wrapped(data.positions)
+      
+      A_lapl = output[1].laplacian
+      A_grad = output[1].jacobian.dense_array
+      
+      result = -0.5 * (A_lapl + jnp.sum(A_grad ** 2))
+      
+      if complex_output:
+        U_val = output[0].x
+        U_lapl = output[0].laplacian
+        U_grad = output[0].jacobian.dense_array
+        
+        result -= 0.5 * (U_lapl / U_val)
+        result -= jnp.sum((U_grad / U_val) * A_grad)
+        
+      return result
+
+    return _lapl_over_f
+  
+  else:
+    raise NotImplementedError(f"Laplacian method '{laplacian_method}' is not implemented.")
 
 
 def potential_electron_electron(r_ee: Array) -> jnp.ndarray:
@@ -147,12 +205,11 @@ def potential_electron_nuclear(charges: Array, r_ae: Array) -> jnp.ndarray:
     r_ae: Shape (nelectrons, natoms). r_ae[i, j] gives the distance between
       electron i and atom j.
   """
-  #return -jnp.sum(charges / r_ae[..., 0])
-  return -jnp.sum(charges[None, :] / r_ae[..., 0])#加上None确保维度
+  return -jnp.sum(charges[None, :] / r_ae[..., 0])
 
 
 def potential_nuclear_nuclear(charges: Array, atoms: Array) -> jnp.ndarray:
-  """Returns the electron-nuclearpotential.
+  """Returns the nuclear-nuclear potential.
 
   Args:
     charges: Shape (natoms). Nuclear charges of the atoms.
@@ -191,7 +248,6 @@ def local_energy(
   """Creates the function to evaluate the local energy."""
   del nspins
 
-  #挪到了这里
   ke = local_kinetic_energy(f,
                               use_scan=use_scan,
                               complex_output=complex_output,
@@ -200,10 +256,7 @@ def local_energy(
 
   def _e_l(params: networks.ParamTree,
            key: chex.PRNGKey,
-           pos: jnp.ndarray,
-           spins: jnp.ndarray,
-           atoms: jnp.ndarray,
-           charges: jnp.ndarray,
+           data: networks.KANetsData,
    ) -> Tuple[jnp.ndarray, Optional[jnp.ndarray]]:
     """Returns the total energy.
 
@@ -212,20 +265,14 @@ def local_energy(
       key: RNG state.
       data: MCMC configuration.
     """
-    
-    """
-    ke = local_kinetic_energy(f,
-                              use_scan=use_scan,
-                              complex_output=complex_output,
-                              laplacian_method=laplacian_method)
-    """  #挪到外面去构造一次就行了，不需要每次调用都构造一次。
+
     ae, _, r_ae, r_ee = networks.construct_input_features(
-        pos, atoms
+        data.positions, data.atoms
     )
-    potential = (potential_energy(r_ae, r_ee, atoms, charges))
+    potential = (potential_energy(r_ae, r_ee, data.atoms, data.charges))
     """something is wrong in the kinetic energy calculation.31.10.2025."""
     #jax.debug.print("data:{}", data)
-    kinetic = ke(params, pos, spins, atoms, charges,)
+    kinetic = ke(params, data)
     #total_energy = potential
     total_energy = potential + kinetic
     energy_mat = None  # Not necessary for ground state

@@ -113,7 +113,8 @@ def logdet_matmul(
     result = jnp.matmul(det, w)[0]
   # return phase as a unit-norm complex number, rather than as an angle
   if result.dtype == jnp.complex64 or result.dtype == jnp.complex128:
-    phase_out = jnp.angle(result)  # result / jnp.abs(result)
+    #phase_out = jnp.angle(result)
+    phase_out = result / jnp.abs(result)
   else:
     phase_out = jnp.sign(result)
   log_out = jnp.log(jnp.abs(result)) + maxlogdet

@@ -17,10 +17,10 @@ Param = MutableMapping[str, jnp.ndarray]
 
 @chex.dataclass
 class KANetsData:
-    positions: Any
-    spins: Any
-    atoms: Any
-    charges: Any
+    positions: jnp.ndarray
+    spins: jnp.ndarray
+    atoms: jnp.ndarray
+    charges: jnp.ndarray
 
 
 def construct_input_features(
