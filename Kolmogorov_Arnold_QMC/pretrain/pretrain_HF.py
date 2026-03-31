@@ -5,7 +5,7 @@ from typing import Callable, Mapping, Sequence, Tuple, Union, Optional
 from absl import logging
 import chex
 #from GaussianNet import constants
-from Kolmogorov_Arnold_QMC.monte_carlo_step import mcmc
+from Kolmogorov_Arnold_QMC.monte_carlo_step import VMCmcstep
 from Kolmogorov_Arnold_QMC.kan_wavefunction_case_one import kan_networks_case_one as networks
 from GaussianNet.tools.utils import scf
 from GaussianNet.tools.utils import system
@@ -161,8 +161,13 @@ def make_pretrain_step(
       log_scf = scf_network(full_params['scf'].eval_slater, pos)
       return (1 - scf_fraction) * log_ferminet + scf_fraction * log_scf
 
-  mcmc_step = mcmc.make_mcmc_step(
-      mcmc_network, batch_per_device=batch_size, steps=1)
+  def mcmc_signed_network(full_params, pos, spins, atoms, charges):
+    logmag = mcmc_network(full_params, pos, spins, atoms, charges)
+    phase = jnp.zeros_like(logmag)
+    return phase, logmag
+
+  mcmc_step = VMCmcstep.make_mcmc_step(
+      f=mcmc_signed_network, ndim=3, nelectrons=sum(electrons), steps=1)
 
   def loss_fn(
       params: networks.ParamTree,
@@ -238,7 +243,11 @@ def make_pretrain_step(
     updates, state = optimizer_update(search_direction, state, params)
     params = optax.apply_updates(params, updates)
     full_params = {'ferminet': params, 'scf': scf_approx}
-    data = mcmc_step(full_params, data, key, width=0.02)
+    mcmc_out = mcmc_step(full_params, data, key, width=0.02)
+    # Compatible with both interfaces:
+    # 1) data_only
+    # 2) (data, pmove)
+    data = mcmc_out[0] if isinstance(mcmc_out, tuple) else mcmc_out
     return data, params, state, loss_val,
 
   return pretrain_step
@@ -330,5 +339,5 @@ def pretrain_hartree_fock(
     jax.debug.print("loss:{}", loss)
     #logging.info('Pretrain iter %05d: %g %g', t, loss[0],)
     if logger:
-      logger(t, loss[0])
+      logger(t, loss)
   return params, data.positions

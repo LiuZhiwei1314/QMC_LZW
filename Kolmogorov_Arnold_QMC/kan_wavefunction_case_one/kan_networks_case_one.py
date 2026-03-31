@@ -97,6 +97,13 @@ def make_kan_net_layers(layer_dims: jnp.ndarray,
     :param chebyshev: turn on chebyshev basis functions or not.
     :return: one vector from equivalent layers.
     """
+    # Materialize architecture hyperparameters as Python integers once.
+    # This avoids `int(tracer)` concretization errors inside JAX-transformed
+    # code paths (e.g. MCMC loops traced by `lax.fori_loop`).
+    layer_dims = tuple(int(x) for x in layer_dims)
+    g = tuple(int(x) for x in g)
+    k = tuple(int(x) for x in k)
+
     def init(key: chex.PRNGKey):
         """here, we initialize the parameters of KANets wave function. 9.10.2025."""
         params = {}
@@ -593,5 +600,4 @@ def make_kan_net(nspins: Tuple[int, int],
         return determinant
 
     return init, apply, orbitals
-
 

@@ -34,6 +34,14 @@ def default() -> ml_collections.ConfigDict:
             'g_envelope': 10,
             'k_envelope': 3,
             'grid_range_envelope': [-10, 10],
-        }
+        },
+        'swanlab': {
+            'enabled': False,
+            'project': 'Kolmogorov_Arnold_QMC',
+            'experiment_name': 'kan_qmc',
+            'workspace': None,
+            'description': 'KAN-QMC training',
+            'mode': 'cloud',
+        },
     })
     return cfg

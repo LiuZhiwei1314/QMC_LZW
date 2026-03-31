@@ -8,19 +8,87 @@ import ml_collections
 import jax.numpy as jnp
 import jax
 import time
+import os
 import optax
 import kfac_jax
 from Kolmogorov_Arnold_QMC.optimizer.opt import make_training_step, make_opt_update_step
 from Kolmogorov_Arnold_QMC.kan_wavefunction_case_one.kan_networks_case_one import make_kan_net, KANetsData
 from Kolmogorov_Arnold_QMC.kan_wavefunction_case_one.spin_indices import jastrow_indices_ee, jastrow_indices_ae
-from Kolmogorov_Arnold_QMC.monte_carlo_step.mcmc import make_mcmc_step
+from Kolmogorov_Arnold_QMC.monte_carlo_step import VMCmcstep
 from Kolmogorov_Arnold_QMC.hamiltonian import hamiltonian
 from Kolmogorov_Arnold_QMC.loss_function import loss as qmc_loss_functions
 from Kolmogorov_Arnold_QMC.initialization import electrons_initialization
 from Kolmogorov_Arnold_QMC.pretrain import pretrain_HF
 
 
+def _to_scalar(x):
+    return float(jnp.asarray(x).reshape(-1)[0])
+
+
+def _init_swanlab(cfg: ml_collections.ConfigDict):
+    swan_cfg = cfg.get('swanlab', ml_collections.ConfigDict())
+    if not bool(swan_cfg.get('enabled', False)):
+        return None
+
+    os.environ.setdefault('SWANLAB_SAVE_DIR', os.path.join(os.getcwd(), '.swanlab'))
+    os.environ.setdefault('SWANLAB_LOG_DIR', os.path.join(os.getcwd(), 'swanlog'))
+
+    try:
+        import swanlab
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            'SwanLab is enabled but not installed. Please run: '
+            '`conda run -n jax pip install swanlab`.'
+        ) from exc
+
+    run_config = {
+        'batch_size': int(cfg.batch_size),
+        'iterations': int(cfg.iterations),
+        'preiterations': int(cfg.preiterations),
+        'nelectrons': int(cfg.system.nelectrons),
+        'electrons': tuple(cfg.system.electrons),
+        'layer_dims': tuple(cfg.layer_dims),
+        'g': tuple(cfg.g),
+        'k': tuple(cfg.k),
+        'chebyshev': bool(cfg.chebyshev),
+        'spline': bool(cfg.spline),
+    }
+
+    try:
+        swanlab.init(
+            project=swan_cfg.get('project', 'Kolmogorov_Arnold_QMC'),
+            workspace=swan_cfg.get('workspace', None),
+            experiment_name=swan_cfg.get('experiment_name', None),
+            description=swan_cfg.get('description', None),
+            mode=swan_cfg.get('mode', 'cloud'),
+            logdir=os.environ['SWANLAB_LOG_DIR'],
+            config=run_config,
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        raise RuntimeError(
+            'Failed to initialize SwanLab. For cloud mode, run '
+            '`conda run -n jax swanlab login` first. '
+            "Or set `cfg.swanlab.mode = 'offline'`."
+        ) from exc
+    return swanlab
+
+
 def train(cfg: ml_collections.ConfigDict,):
+    swanlab = _init_swanlab(cfg)
+    swan_state = {'module': swanlab}
+
+    def swan_log(metrics, step):
+        if swan_state['module'] is None:
+            return
+        try:
+            swan_state['module'].log(metrics, step=step)
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f'[SwanLab] log failed and will be disabled: {exc}')
+            swan_state['module'] = None
+
+    def pretrain_logger(step, value):
+        swan_log({'pretrain/loss': _to_scalar(value)}, int(step))
+
     spins_jastrow = jnp.array(cfg.spins)
     #jax.debug.print("spins:{}", spins_jastrow)
     parallel_indices, antiparallel_indices, n_parallel, n_antiparallel = jastrow_indices_ee(spins=spins_jastrow,
@@ -114,99 +182,116 @@ def train(cfg: ml_collections.ConfigDict,):
 
     key, hartree_fock_key = jax.random.split(key, 2)
     orbitals_vmap = jax.vmap(orbitals_apply, in_axes=(None, 0, None, None, None), out_axes=0)
-    params, pos = pretrain_HF.pretrain_hartree_fock(
-        params=params,
-        positions=pos,
-        spins=spins,
-        charges=charges,
-        atoms=atoms,
-        batch_network=batch_network,
-        batch_orbitals=orbitals_vmap,
-        sharded_key=hartree_fock_key,
-        electrons=cfg.system.electrons,
-        scf_approx=hartree_fock,
-        iterations=cfg.preiterations,
-        batch_size=cfg.batch_size,
-        scf_fraction=1.0,
-        states=0,
-    )
+    try:
+        params, pos = pretrain_HF.pretrain_hartree_fock(
+            params=params,
+            positions=pos,
+            spins=spins,
+            charges=charges,
+            atoms=atoms,
+            batch_network=batch_network,
+            batch_orbitals=orbitals_vmap,
+            sharded_key=hartree_fock_key,
+            electrons=cfg.system.electrons,
+            scf_approx=hartree_fock,
+            iterations=cfg.preiterations,
+            batch_size=cfg.batch_size,
+            logger=pretrain_logger if swan_state['module'] is not None else None,
+            scf_fraction=1.0,
+            states=0,
+        )
 
-    #jax.debug.print("pos:{}", pos)
-    #jax.debug.print("params:{}", params)
-    #jax.debug.print("atoms:{}", atoms)
+        #jax.debug.print("pos:{}", pos)
+        #jax.debug.print("params:{}", params)
+        #jax.debug.print("atoms:{}", atoms)
 
-    #jax.debug.print("wavefunction_value:{}", wavefunction_value)
-    """we need do batch for pos."""
-    data = KANetsData(positions=pos, spins=spins, atoms=atoms, charges=charges)
+        #jax.debug.print("wavefunction_value:{}", wavefunction_value)
+        """we need do batch for pos."""
+        data = KANetsData(positions=pos, spins=spins, atoms=atoms, charges=charges)
 
-    monte_carlo = make_mcmc_step(batch_network=batch_network,
-                                 batch_per_device=2,
-                                 steps=10,
-                                 atoms=atoms,
-                                 blocks=1)
-    """the following two lines for testing the walker move process.31.10.2025."""
-    #key, monte_carlo_key = jax.random.split(subkey)
-    #new_data = monte_carlo(params, data, monte_carlo_key, 0.1)
-    """now we need move to the energy calculation method."""
-    """the following is energy calculation test. 31.10.2025."""
-    #jax.debug.print("charges:{}", charges)
-    key, energy_key = jax.random.split(key)
-    local_energy = hamiltonian.local_energy(f=signed_network,
-                                            nspins=(3, 3),
-                                            charges=charges,
-                                            use_scan=False,
-                                            complex_output=False,
-                                            laplacian_method='default')
-    """the reason for the error is local_energy can not accept the batched input. 3.11.2025."""
-    """we solved it by a simple reconstruction of input axes."""
-    #local_energy_vmap = jax.vmap(local_energy, in_axes=(None, None, 0, None, None, None))
-    #output = local_energy_vmap(params, energy_key, data.positions, data.spins, data.atoms, data.charges,)
-    #jax.debug.print("output:{}", output)
-    """next, we need construction the loss function. 3.11.2025."""
-    evaluate_loss = qmc_loss_functions.make_loss(log_network,
-                                                 local_energy,
-                                                 clip_local_energy=5.0,
-                                                 clip_from_median=True,
-                                                 center_at_clipped_energy=True,
-                                                 complex_output=True,
-                                                 )
+        # Main-chain MCMC now uses VMC all-electron kernel from VMCmcstep.py.
+        batch_signed_network = jax.vmap(
+            signed_network, in_axes=(None, 0, None, None, None), out_axes=(0, 0)
+        )
+        monte_carlo = VMCmcstep.make_mcmc_step(
+            f=batch_signed_network,
+            ndim=3,
+            nelectrons=cfg.system.nelectrons,
+            steps=10,
+        )
+        """the following two lines for testing the walker move process.31.10.2025."""
+        #key, monte_carlo_key = jax.random.split(subkey)
+        #new_data = monte_carlo(params, data, monte_carlo_key, 0.1)
+        """now we need move to the energy calculation method."""
+        """the following is energy calculation test. 31.10.2025."""
+        #jax.debug.print("charges:{}", charges)
+        key, energy_key = jax.random.split(key)
+        local_energy = hamiltonian.local_energy(f=signed_network,
+                                                nspins=(3, 3),
+                                                charges=charges,
+                                                use_scan=False,
+                                                complex_output=False,
+                                                laplacian_method='default')
+        """the reason for the error is local_energy can not accept the batched input. 3.11.2025."""
+        """we solved it by a simple reconstruction of input axes."""
+        #local_energy_vmap = jax.vmap(local_energy, in_axes=(None, None, 0, None, None, None))
+        #output = local_energy_vmap(params, energy_key, data.positions, data.spins, data.atoms, data.charges,)
+        #jax.debug.print("output:{}", output)
+        """next, we need construction the loss function. 3.11.2025."""
+        evaluate_loss = qmc_loss_functions.make_loss(log_network,
+                                                     local_energy,
+                                                     clip_local_energy=5.0,
+                                                     clip_from_median=True,
+                                                     center_at_clipped_energy=True,
+                                                     complex_output=True,
+                                                     )
 
-    def learning_rate_schedule(t_: jnp.ndarray) -> jnp.ndarray:
-        return 0.05 * jnp.power(
-            (1.0 / (1.0 + (t_ / 1.0))), 10000.0)
+        def learning_rate_schedule(t_: jnp.ndarray) -> jnp.ndarray:
+            return 0.05 * jnp.power(
+                (1.0 / (1.0 + (t_ / 1.0))), 10000.0)
 
-    optimizer = optax.chain(
-        optax.scale_by_adam(b1=0.9, b2=0.999,eps=1e-6),
-        optax.scale_by_schedule(learning_rate_schedule),
-        optax.scale(-1.))
-    #jax.debug.print("type_of_optimizer:{}",type(optimizer))
-    if isinstance(optimizer, optax.GradientTransformation):
-        opt_state = optimizer.init(params)
-        #jax.debug.print("opt_state:{}", opt_state)
-        """because we dont set any parallel strategy for monte carlo step. We also need rewrite the parallel strategy for optimization.4.11.2025."""
-        step = make_training_step(mcmc_step=monte_carlo,
-                                  optimizer_step=make_opt_update_step(evaluate_loss, optimizer),
-                                  reset_if_nan=True)
+        optimizer = optax.chain(
+            optax.scale_by_adam(b1=0.9, b2=0.999,eps=1e-6),
+            optax.scale_by_schedule(learning_rate_schedule),
+            optax.scale(-1.))
+        #jax.debug.print("type_of_optimizer:{}",type(optimizer))
+        if isinstance(optimizer, optax.GradientTransformation):
+            opt_state = optimizer.init(params)
+            #jax.debug.print("opt_state:{}", opt_state)
+            """because we dont set any parallel strategy for monte carlo step. We also need rewrite the parallel strategy for optimization.4.11.2025."""
+            step = make_training_step(mcmc_step=monte_carlo,
+                                      optimizer_step=make_opt_update_step(evaluate_loss, optimizer),
+                                      reset_if_nan=True)
 
-    mcmc_width = 0.1
-    pmoves = None
-    t_init = 0
-    sharded_key = key
-    jax.debug.print("sharded_key:{}", sharded_key)
-    """to be continued... 3.11.2025."""
-    for t in range(t_init, cfg.iterations):
-        sharded_key, subkeys = jax.random.split(sharded_key, 2)
+            mcmc_width = 0.02
+            pmoves = None
+            t_init = 0
+            sharded_key = key
+            jax.debug.print("sharded_key:{}", sharded_key)
+            """to be continued... 3.11.2025."""
+            for t in range(t_init, cfg.iterations):
+                sharded_key, subkeys = jax.random.split(sharded_key, 2)
 
-        data, params, opt_state, loss, aux_data = step(data, params, opt_state, subkeys, mcmc_width,)
+                data, params, opt_state, loss, aux_data, pmove = step(data, params, opt_state, subkeys, mcmc_width,)
 
-        #loss = loss[0]
-        jax.debug.print("loss:{}", loss)
+                # 调整步长
+                pmove_mean = jnp.mean(pmove)
+                mcmc_width = jnp.where(pmove_mean < 0.4, mcmc_width * 0.95,
+                                       jnp.where(pmove_mean > 0.6, mcmc_width * 1.05, mcmc_width))
 
-
-
-
-
-
+                #loss = loss[0]
+                jax.debug.print("loss: {}, pmove: {}, mcmc_width: {}", loss, pmove_mean, mcmc_width)
+                swan_log(
+                    {
+                        'train/loss': _to_scalar(loss),
+                        'train/pmove': _to_scalar(pmove_mean),
+                        'train/mcmc_width': _to_scalar(mcmc_width),
+                    },
+                    int(t),
+                )
+    finally:
+        if swan_state['module'] is not None:
+            swan_state['module'].finish()
 
 
 

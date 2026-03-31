@@ -109,7 +109,8 @@ def make_opt_update_step(evaluate_loss: qmc_loss_functions.LossFn,
   ) -> OptUpdateResults:
     """Evaluates the loss and gradients and updates the parameters using optax."""
     (loss, aux_data), grad = loss_and_grad(params, key, data)
-    #grad = constants.pmean(grad)
+    # Single-device: identity. Multi-device (inside pmap): cross-device mean.
+    grad = constants.pmean(grad)
     #jax.debug.print("grad:{}", grad.type)
     #jax.debug.print("params:{}", params.type)
     #jax.debug.print("opt_state:{}", opt_state.type)
@@ -153,7 +154,7 @@ def make_training_step(
     """A full update iteration (except for KFAC): MCMC steps + optimization."""
     # MCMC loop
     mcmc_key, loss_key = jax.random.split(key, num=2)
-    data = mcmc_step(params, data, mcmc_key, mcmc_width)
+    data, pmove = mcmc_step(params, data, mcmc_key, mcmc_width)
     #data, pmove = mcmc_step(params, data, mcmc_key)
 
     # Optimization step
@@ -168,6 +169,6 @@ def make_training_step(
       new_state = jax.lax.cond(jnp.isnan(loss),
                                lambda: state,
                                lambda: new_state)
-    return data, new_params, new_state, loss, aux_data
+    return data, new_params, new_state, loss, aux_data, pmove
 
   return step

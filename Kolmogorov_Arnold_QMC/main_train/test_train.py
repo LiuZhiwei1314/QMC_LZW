@@ -29,5 +29,8 @@ cfg.add_residual = True
 cfg.envelope_chebyshev = False
 cfg.envelope_spline = False
 cfg.envelope_simple = True
+cfg.swanlab.enabled = True
+cfg.swanlab.project = "Kolmogorov_Arnold_QMC"
+cfg.swanlab.experiment_name = "test_train_carbon"
+cfg.swanlab.mode = "cloud"
 train.train(cfg)
-
