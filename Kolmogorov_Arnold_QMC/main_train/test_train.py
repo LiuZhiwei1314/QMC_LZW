@@ -11,7 +11,7 @@ cfg.system.molecule = [system.Atom('C', (0, 0, 0))]
 
 """the optimization is not stable. But why ? Is the residual connect necessary? 11.11.2025.
 what does grid range really mean? can it be minus?"""
-cfg.batch_size = 10
+cfg.batch_size = 128
 cfg.layer_dims = [4, 20, 20, 20, 20]
 cfg.g = [10, 10, 10, 10]
 cfg.k = [3, 3, 3, 3]

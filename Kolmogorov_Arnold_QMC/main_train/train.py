@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import jax
 import time
 import os
+import numpy as np
 import optax
 import kfac_jax
 from Kolmogorov_Arnold_QMC.optimizer.opt import make_training_step, make_opt_update_step
@@ -226,11 +227,13 @@ def train(cfg: ml_collections.ConfigDict,):
         """the following is energy calculation test. 31.10.2025."""
         #jax.debug.print("charges:{}", charges)
         key, energy_key = jax.random.split(key)
+        complex_output = bool(cfg.get('complex_output', False))
+        loss_network = log_network if complex_output else logabs_network
         local_energy = hamiltonian.local_energy(f=signed_network,
                                                 nspins=(3, 3),
                                                 charges=charges,
                                                 use_scan=False,
-                                                complex_output=False,
+                                                complex_output=complex_output,
                                                 laplacian_method='default')
         """the reason for the error is local_energy can not accept the batched input. 3.11.2025."""
         """we solved it by a simple reconstruction of input axes."""
@@ -238,12 +241,12 @@ def train(cfg: ml_collections.ConfigDict,):
         #output = local_energy_vmap(params, energy_key, data.positions, data.spins, data.atoms, data.charges,)
         #jax.debug.print("output:{}", output)
         """next, we need construction the loss function. 3.11.2025."""
-        evaluate_loss = qmc_loss_functions.make_loss(log_network,
+        evaluate_loss = qmc_loss_functions.make_loss(loss_network,
                                                      local_energy,
                                                      clip_local_energy=5.0,
                                                      clip_from_median=True,
                                                      center_at_clipped_energy=True,
-                                                     complex_output=True,
+                                                     complex_output=complex_output,
                                                      )
 
         def learning_rate_schedule(t_: jnp.ndarray) -> jnp.ndarray:
@@ -263,8 +266,12 @@ def train(cfg: ml_collections.ConfigDict,):
                                       optimizer_step=make_opt_update_step(evaluate_loss, optimizer),
                                       reset_if_nan=True)
 
-            mcmc_width = 0.02
-            pmoves = None
+            mcmc_width = jnp.asarray(0.1)
+            adapt_frequency = int(cfg.get('mcmc_adapt_frequency', 20))
+            pmove_min = float(cfg.get('mcmc_pmove_min', 0.50))
+            pmove_max = float(cfg.get('mcmc_pmove_max', 0.60))
+            width_scale = float(cfg.get('mcmc_width_scale', 1.05))
+            pmoves = np.zeros((adapt_frequency,), dtype=np.float32)
             t_init = 0
             sharded_key = key
             jax.debug.print("sharded_key:{}", sharded_key)
@@ -274,17 +281,31 @@ def train(cfg: ml_collections.ConfigDict,):
 
                 data, params, opt_state, loss, aux_data, pmove = step(data, params, opt_state, subkeys, mcmc_width,)
 
-                # 调整步长
                 pmove_mean = jnp.mean(pmove)
-                mcmc_width = jnp.where(pmove_mean < 0.4, mcmc_width * 0.95,
-                                       jnp.where(pmove_mean > 0.6, mcmc_width * 1.05, mcmc_width))
+                t_since_update = t % adapt_frequency
+                pmoves[t_since_update] = _to_scalar(pmove_mean)
+                if t > 0 and t_since_update == 0:
+                    mean_pmove = float(np.mean(pmoves))
+                    if mean_pmove > pmove_max:
+                        mcmc_width = mcmc_width * width_scale
+                    elif mean_pmove < pmove_min:
+                        mcmc_width = mcmc_width / width_scale
+                window_size = min(t + 1, adapt_frequency)
+                pmove_window_mean = float(np.mean(pmoves[:window_size]))
 
                 #loss = loss[0]
-                jax.debug.print("loss: {}, pmove: {}, mcmc_width: {}", loss, pmove_mean, mcmc_width)
+                jax.debug.print(
+                    "loss: {}, pmove: {}, pmove_window: {}, mcmc_width: {}",
+                    loss,
+                    pmove_mean,
+                    pmove_window_mean,
+                    mcmc_width,
+                )
                 swan_log(
                     {
                         'train/loss': _to_scalar(loss),
                         'train/pmove': _to_scalar(pmove_mean),
+                        'train/pmove_window': pmove_window_mean,
                         'train/mcmc_width': _to_scalar(mcmc_width),
                     },
                     int(t),
@@ -292,8 +313,5 @@ def train(cfg: ml_collections.ConfigDict,):
     finally:
         if swan_state['module'] is not None:
             swan_state['module'].finish()
-
-
-
 
 
