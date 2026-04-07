@@ -1,5 +1,2 @@
-In this branch, we try to make many body wave function based on Kolmogorov-Arnold Networks.
-Jax version 0.6.2.
-The current architectures is as follows,
-![1](img2.png)
-
+QMC based on KAN
+[![中关村学院 GitHub 组织](https://img.shields.io/badge/Linked%20to-bjzgcai%20Org-blue?logo=github)](https://github.com/bjzgcai)

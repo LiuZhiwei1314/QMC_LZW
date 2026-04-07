@@ -1,0 +1,11 @@
+jax<0.5
+jaxlib<0.5
+tensorflow-probability==0.25.0
+distrax==0.1.5
+kfac-jax
+ml_collections
+optax
+chex
+attrs
+pyscf
+tqdm
