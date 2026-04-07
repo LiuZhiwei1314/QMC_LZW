@@ -429,3 +429,4 @@ def train(cfg: ml_collections.ConfigDict):
                 run_manager.checkpoints.save_step('train', step_id, checkpoint_state)
     finally:
         run_manager.close()
+
