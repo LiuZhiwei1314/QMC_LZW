@@ -135,6 +135,8 @@ def pretrain_ks_dft(
     logger: Optional[Callable[[int, float], None]] = None,
     checkpoint_callback: Optional[Callable[[int, float, networks.ParamTree, optax.OptState, networks.KANetsData, chex.PRNGKey], None]] = None,
     scf_fraction: float = 0.0,
+    mcmc_steps: int = 1,
+    mcmc_width: float = 0.02,
     start_iteration: int = 0,
     opt_state: Optional[optax.OptState] = None,
     data: Optional[networks.KANetsData] = None,
@@ -152,6 +154,8 @@ def pretrain_ks_dft(
       full_det=True,
       scf_fraction=scf_fraction,
       states=0,
+      mcmc_steps=mcmc_steps,
+      mcmc_width=mcmc_width,
   )
 
   if data is None:

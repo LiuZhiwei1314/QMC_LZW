@@ -6,8 +6,12 @@ from hamiltonian import hamiltonian
 from kan_wavefunction_case_one import kan_networks_case_one as networks
 import jax
 import jax.numpy as jnp
-import kfac_jax
 from typing_extensions import Protocol
+
+try:
+    import kfac_jax
+except Exception:
+    kfac_jax = None
 
 
 @chex.dataclass
@@ -225,13 +229,15 @@ def make_loss(network,
       term1 = (jnp.dot(clipped_el, jnp.conjugate(psi_tangent)) +
                jnp.dot(jnp.conjugate(clipped_el), psi_tangent))
       term2 = jnp.sum(aux_data.clipped_energy*psi_tangent.real)
-      kfac_jax.register_normal_predictive_distribution(
-          psi_primal.real[:, None])
+      if kfac_jax is not None:
+        kfac_jax.register_normal_predictive_distribution(
+            psi_primal.real[:, None])
       primals_out = loss.real, aux_data
       device_batch_size = jnp.shape(aux_data.local_energy)[0]
       tangents_out = ((term1 - 2*term2).real / device_batch_size, aux_data)
     else:
-      kfac_jax.register_normal_predictive_distribution(psi_primal[:, None])
+      if kfac_jax is not None:
+        kfac_jax.register_normal_predictive_distribution(psi_primal[:, None])
       primals_out = loss, aux_data
       device_batch_size = jnp.shape(aux_data.local_energy)[0]
       tangents_out = (jnp.dot(psi_tangent, diff) / device_batch_size, aux_data)

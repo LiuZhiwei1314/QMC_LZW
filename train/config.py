@@ -28,15 +28,17 @@ def default() -> ml_collections.ConfigDict:
         'hf_excitation_type': 'ordered',
         'dft_xc': 'pbe,pbe',
         'dft_grid_level': 3,
-        'scf_fraction': 1.0,
+        'scf_fraction': 0.0,
         'nfeatures': 4,
         'mcmc_batch_per_device': 2,
         'mcmc_steps': 10,
         'mcmc_blocks': 1,
         'mcmc_width': 0.1,
+        'pretrain_mcmc_steps': 1,
+        'pretrain_mcmc_width': 0.02,
         'clip_local_energy': 5.0,
         'use_scan': False,
-        'complex_output': True,
+        'complex_output': False,
         'laplacian_method': 'default',
         't_init': 0,
         'debug': False,
@@ -50,6 +52,19 @@ def default() -> ml_collections.ConfigDict:
         'add_residual': True,
         'add_bias': True,
         'external_weights': True,
+        'mkan': {
+            # Orbital MKAN receives one electron feature row at a time:
+            # [r_ae, ae] for every atom, so input_dim defaults to nfeatures.
+            # The final output is 2 * nelectrons real channels when
+            # complex_output=True, interpreted as complex orbital values.
+            'layer_type': 'chebyshev',
+            'input_dim': None,
+            'output_dim': None,
+            'width': None,
+            'mult_arity': 2,
+            'required_parameters': None,
+            'pretrain_phase_weight': 1.0e-2,
+        },
         'system': {
             'molecule': [system.Atom('C', (0, 0, 0))],
             'electrons': (3, 3),

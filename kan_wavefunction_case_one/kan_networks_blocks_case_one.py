@@ -165,7 +165,7 @@ def forward_each_layer(x: jnp.ndarray,
   else:
     return {'w': weight}'''
 
-'''
+
 seed = 23
 key = jax.random.PRNGKey(seed)
 """for example, only one atom and six electrons."""
@@ -174,4 +174,4 @@ input = jnp.array([[0.1, 0.2, 0.1,], [0.2, 0.2, 0.2,],[0.3, 0.3, 0.3,], [0.4, 0.
 params = init_ka_layer(key=key, n_in=3, n_out=4, g=3, k=3, add_residual=True, add_bias=True, external_weights=True)
 output = forward_each_layer(x=input, n_in=3, n_out=4, g=3, k=3, grid_range=jnp.array([0, 1]),
                             c_basis = params['c_basis'], c_spl = params['c_spl'], bias = params['bias'], c_res = params['c_res'] )
-'''
+

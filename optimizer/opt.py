@@ -1,8 +1,7 @@
 import optax
 import jax.numpy as jnp
 from kan_wavefunction_case_one import kan_networks_case_one as networks
-from typing import Union, Tuple, Optional
-import kfac_jax
+from typing import Any, Union, Tuple, Optional
 import chex
 import jax
 import constants
@@ -11,7 +10,7 @@ from typing_extensions import Protocol
 from loss_function import loss as qmc_loss_functions
 
 
-OptimizerState = Union[optax.OptState, kfac_jax.Optimizer.State]
+OptimizerState = Union[optax.OptState, Any]
 OptUpdateResults = Tuple[networks.ParamTree, Optional[OptimizerState],
                          jnp.ndarray,
                          Optional[qmc_loss_functions.AuxiliaryLossData]]

@@ -106,6 +106,8 @@ def make_pretrain_step(
     full_det: bool = False,
     scf_fraction: float = 0.0,
     states: int = 0,
+  mcmc_steps: int = 1,
+  mcmc_width: float = 0.02,
 ):
   """Creates function for performing one step of Hartre-Fock pretraining.
 
@@ -168,12 +170,16 @@ def make_pretrain_step(
       return phase, logmag
 
   mcmc_step = VMCmcstep.make_mcmc_step(
-      f=mcmc_signed_network, ndim=3, nelectrons=sum(electrons), steps=1)
+      f=mcmc_signed_network,
+      ndim=3,
+      nelectrons=sum(electrons),
+      steps=mcmc_steps,
+  )
 
   def loss_fn(
       params: networks.ParamTree,
       data: networks.KANetsData,
-      scf_approx: scf.Scf,
+      target,
   ):
     pos = data.positions
     spins = data.spins
@@ -209,12 +215,13 @@ def make_pretrain_step(
         return result
 
     else:
-      scf_orbitals = scf_approx.eval_orbitals
       net_orbitals = batch_orbitals
 
-    target = scf_orbitals(pos, electrons)
+    target = jax.lax.stop_gradient(target)
     orbitals = net_orbitals(params, pos, spins, data.atoms, data.charges)
-    cnorm = lambda x, y: (x - y) * jnp.conj(x - y)  # complex norm
+    def cnorm(x, y):
+      diff = x - y
+      return jnp.real(diff) ** 2 + jnp.imag(diff) ** 2
     if full_det:
       dims = target[0].shape[:-2]  # (batch) or (batch, states).
       na = target[0].shape[-2]
@@ -238,13 +245,19 @@ def make_pretrain_step(
 
   def pretrain_step(data, params, state, key, scf_approx):
     """One iteration of pretraining to match HF."""
+    target = scf_approx.eval_orbitals(data.positions, electrons)
     val_and_grad = jax.value_and_grad(loss_fn, argnums=0)
-    loss_val, search_direction = val_and_grad(params, data, scf_approx)
+    loss_val, search_direction = val_and_grad(params, data, target)
     search_direction = search_direction
     updates, state = optimizer_update(search_direction, state, params)
     params = optax.apply_updates(params, updates)
-    full_params = {'ferminet': params, 'scf': scf_approx}
-    mcmc_out = mcmc_step(full_params, data, key, width=0.02)
+    if scf_fraction < 1e-6:
+      full_params = {'ferminet': params}
+    elif scf_fraction > 0.999999:
+      full_params = {'scf': scf_approx}
+    else:
+      full_params = {'ferminet': params, 'scf': scf_approx}
+    mcmc_out = mcmc_step(full_params, data, key, width=mcmc_width)
     data = mcmc_out[0] if isinstance(mcmc_out, tuple) else mcmc_out
     return data, params, state, loss_val,
 
@@ -269,6 +282,8 @@ def pretrain_hartree_fock(
     checkpoint_callback: Optional[Callable[[int, float, networks.ParamTree, optax.OptState, networks.KANetsData, chex.PRNGKey], None]] = None,
     scf_fraction: float = 0.0,
     states: int = 0,
+    mcmc_steps: int = 1,
+    mcmc_width: float = 0.02,
     start_iteration: int = 0,
     opt_state: Optional[optax.OptState] = None,
     data: Optional[networks.KANetsData] = None,
@@ -286,6 +301,8 @@ def pretrain_hartree_fock(
       full_det=True,
       scf_fraction=scf_fraction,
       states=states,
+      mcmc_steps=mcmc_steps,
+      mcmc_width=mcmc_width,
   )
 
   if data is None:

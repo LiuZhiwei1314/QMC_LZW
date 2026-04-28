@@ -5,6 +5,7 @@ distrax==0.1.5
 kfac-jax
 ml_collections
 optax
+flax
 chex
 attrs
 pyscf
