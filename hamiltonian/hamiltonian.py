@@ -9,8 +9,6 @@ import numpy as np
 import folx
 
 
-
-
 Array = Union[jnp.ndarray, np.ndarray]
 
 WaveFunctionOutput = Callable[
