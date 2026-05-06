@@ -4,7 +4,7 @@ import chex
 import jax
 from jax import lax
 from jax import numpy as jnp
-import kan_wavefunction_case_one.kan_networks_case_one as networks
+from lkan import qmc_types as networks
 import constants
 from tools.utils import utils
 

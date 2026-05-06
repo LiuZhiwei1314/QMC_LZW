@@ -6,7 +6,7 @@ from absl import logging
 import chex
 #import constants
 from monte_carlo_step import VMCmcstep
-from kan_wavefunction_case_one import kan_networks_case_one as networks
+from lkan import qmc_types as networks
 from tools.utils import scf
 from tools.utils import system
 import jax

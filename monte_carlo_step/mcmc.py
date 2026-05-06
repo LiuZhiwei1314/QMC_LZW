@@ -3,7 +3,7 @@ import jax
 from jax import lax
 import jax.numpy as jnp
 import numpy as np
-import kan_wavefunction_case_one.kan_networks_case_one as networks
+from lkan import qmc_types as networks
 
 
 def _harmonic_mean(x, atoms):
@@ -120,4 +120,3 @@ def make_mcmc_step(batch_network,
         return data, pmove
 
     return mcmc_step
-

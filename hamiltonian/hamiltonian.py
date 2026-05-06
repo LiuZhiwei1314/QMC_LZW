@@ -1,6 +1,6 @@
 from typing import Any, Callable, Optional, Sequence, Tuple, Union, Protocol, cast
 import chex
-from kan_wavefunction_case_one import kan_networks_case_one as networks
+from lkan import qmc_types as networks
 from tools.utils import utils
 import jax
 from jax import lax

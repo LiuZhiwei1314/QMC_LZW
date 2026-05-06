@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import optax
 from tqdm.auto import trange
 
-from kan_wavefunction_case_one import kan_networks_case_one as networks
+from lkan import qmc_types as networks
 from monte_carlo_step import VMCmcstep
 
 

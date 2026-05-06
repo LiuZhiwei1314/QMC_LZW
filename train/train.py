@@ -13,8 +13,8 @@ from tqdm.auto import trange
 from hamiltonian import hamiltonian
 from initialization import electrons_initialization
 from jkan.models import MultKAN
-from kan_wavefunction_case_one import normal_network_blocks
-from kan_wavefunction_case_one.kan_networks_case_one import KANetsData
+from lkan.qmc_determinants import logdet_matmul
+from lkan.qmc_types import KANetsData
 from loss_function import loss as qmc_loss_functions
 from monte_carlo_step import VMCmcstep
 from optimizer.opt import make_opt_update_step, make_training_step
@@ -266,7 +266,7 @@ class VMCTrainer:
 
         def signed_network(params, pos, spins, atoms, charges):
             determinant = orbitals_apply(params, pos, spins, atoms, charges)
-            return normal_network_blocks.logdet_matmul(determinant)
+            return logdet_matmul(determinant)
 
         def logabs_network(params, pos, spins, atoms, charges):
             return signed_network(params, pos, spins, atoms, charges)[1]

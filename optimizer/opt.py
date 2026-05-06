@@ -1,6 +1,6 @@
 import optax
 import jax.numpy as jnp
-from kan_wavefunction_case_one import kan_networks_case_one as networks
+from lkan import qmc_types as networks
 from typing import Any, Union, Tuple, Optional
 import chex
 import jax
