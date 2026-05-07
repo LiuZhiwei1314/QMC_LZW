@@ -7,8 +7,8 @@ from typing import Sequence
 
 import jax.numpy as jnp
 
-from ..layers import SplineKANLayer
-from ..utils import ensure_2d
+from ..jkan.layers import SplineKANLayer
+from ..jkan.utils import ensure_2d
 
 
 Array = jnp.ndarray

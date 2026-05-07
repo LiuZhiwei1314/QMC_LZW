@@ -11,13 +11,13 @@ from typing import Any, Iterable, Mapping, MutableMapping, Optional, Sequence, T
 # from kan_wavefunction_case_one.JastrowPade import make_pade_ee_jastrow
 # from kan_wavefunction_case_one import simple_envelope
 # from kan_wavefunction_case_one import normal_network_blocks
-from kan_wavefunction_case_one import kan_networks_blocks_case_one as kan_networks_blocks
-from kan_wavefunction_case_one import chebyshev_blocks as chebyshev_blocks
-from kan_wavefunction_case_one import kan_envelopes_case_one_general as kan_envelopes
-from kan_wavefunction_case_one import chebyshev_envelopes
-from kan_wavefunction_case_one.JastrowPade import make_pade_ee_jastrow
-from kan_wavefunction_case_one import simple_envelope
-from kan_wavefunction_case_one import normal_network_blocks
+from garbage.kan_wavefunction_case_one import kan_networks_blocks_case_one as kan_networks_blocks
+from garbage.kan_wavefunction_case_one import chebyshev_blocks as chebyshev_blocks
+from garbage.kan_wavefunction_case_one import kan_envelopes_case_one_general as kan_envelopes
+from garbage.kan_wavefunction_case_one import chebyshev_envelopes
+from garbage.kan_wavefunction_case_one.JastrowPade import make_pade_ee_jastrow
+from garbage.kan_wavefunction_case_one import simple_envelope
+from garbage.kan_wavefunction_case_one import normal_network_blocks
 
 ParamTree = Union[jnp.ndarray, Iterable['ParamTree'], MutableMapping[Any, 'ParamTree']]
 Param = MutableMapping[str, jnp.ndarray]

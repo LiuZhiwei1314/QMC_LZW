@@ -10,8 +10,8 @@ import ml_collections
 import numpy as np
 
 from hamiltonian import hamiltonian
-from kan_wavefunction_case_one.kan_networks_case_one import make_kan_net
-from kan_wavefunction_case_one.spin_indices import jastrow_indices_ee
+from garbage.kan_wavefunction_case_one.kan_networks_case_one import make_kan_net
+from garbage.kan_wavefunction_case_one.spin_indices import jastrow_indices_ee
 from tools.utils import system
 
 

@@ -47,30 +47,28 @@ class MultKAN(nnx.Module):
             self.mult_homo = False
         self.mult_arity = mult_arity
 
-        self.layers = nnx.List(
-            [
-                LayerClass(
-                    n_in=self.width_in[i],
-                    n_out=self.width_out[i + 1],
-                    **required_parameters,
-                    seed=seed + i,
-                )
-                for i in range(self.depth)
-            ]
-        )
+        self.layers = [
+            LayerClass(
+                n_in=self.width_in[i],
+                n_out=self.width_out[i + 1],
+                **required_parameters,
+                seed=seed + i,
+            )
+            for i in range(self.depth)
+        ]
 
-        self.node_bias = nnx.List(
-            [nnx.Param(jnp.zeros((self.width_in[i + 1],))) for i in range(self.depth)]
-        )
-        self.node_scale = nnx.List(
-            [nnx.Param(jnp.ones((self.width_in[i + 1],))) for i in range(self.depth)]
-        )
-        self.subnode_bias = nnx.List(
-            [nnx.Param(jnp.zeros((self.width_out[i + 1],))) for i in range(self.depth)]
-        )
-        self.subnode_scale = nnx.List(
-            [nnx.Param(jnp.ones((self.width_out[i + 1],))) for i in range(self.depth)]
-        )
+        self.node_bias = [
+            nnx.Param(jnp.zeros((self.width_in[i + 1],))) for i in range(self.depth)
+        ]
+        self.node_scale = [
+            nnx.Param(jnp.ones((self.width_in[i + 1],))) for i in range(self.depth)
+        ]
+        self.subnode_bias = [
+            nnx.Param(jnp.zeros((self.width_out[i + 1],))) for i in range(self.depth)
+        ]
+        self.subnode_scale = [
+            nnx.Param(jnp.ones((self.width_out[i + 1],))) for i in range(self.depth)
+        ]
 
     def _arity_list_for_width(self, width_idx: int) -> List[int]:
         dim_mult = self.width[width_idx][1]

@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import jax
-from kan_networks_case_one import make_kan_net
-from spin_indices import jastrow_indices_ee, jastrow_indices_ae
+from garbage.kan_wavefunction_case_one.kan_networks_case_one import make_kan_net
+from garbage.kan_wavefunction_case_one.spin_indices import jastrow_indices_ee, jastrow_indices_ae
 
 """we make the example for C atom which has six electrons.23.10.2025."""
 seed = 42

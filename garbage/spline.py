@@ -8,9 +8,9 @@ from typing import Callable, Optional
 import jax
 import jax.numpy as jnp
 
-from ..grids import SplineGrid
-from ..initializers import init_base_params
-from ..utils import solve_full_lstsq
+from ..jkan.grids import SplineGrid
+from ..jkan.initializers import init_base_params
+from ..jkan.utils import solve_full_lstsq
 
 
 Array = jnp.ndarray
