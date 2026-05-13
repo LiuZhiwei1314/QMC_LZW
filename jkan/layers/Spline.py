@@ -37,7 +37,7 @@ class BaseLayer(nnx.Module):
         bias (Union[nnx.Param, None]):
             Bias parameter if add_bias is True, else None.
     """
-     
+    
     def __init__(self,
                  n_in: int = 2, n_out: int = 5, k: int = 3,
                  G: int = 3, grid_range: tuple = (-1,1), grid_e: float = 0.05,
@@ -517,6 +517,16 @@ class BaseLayer(nnx.Module):
         cj = jnp.squeeze(cj, axis=-1)
 
         self.c_basis = nnx.Param(cj)
+
+    def extend_grid(self, x, G_new):
+        """Alias for :meth:`update_grid` with explicit grid-extension naming."""
+
+        self.update_grid(x, G_new)
+
+    def refine_grid(self, x, G_new):
+        """Alias for :meth:`update_grid` with KAN refinement naming."""
+
+        self.update_grid(x, G_new)
 
 
     def __call__(self, x):
@@ -1073,6 +1083,16 @@ class SplineLayer(nnx.Module):
         cj = cj.transpose(2, 0, 1)
 
         self.c_basis = nnx.Param(cj)
+
+    def extend_grid(self, x, G_new):
+        """Alias for :meth:`update_grid` with explicit grid-extension naming."""
+
+        self.update_grid(x, G_new)
+
+    def refine_grid(self, x, G_new):
+        """Alias for :meth:`update_grid` with KAN refinement naming."""
+
+        self.update_grid(x, G_new)
 
 
     def __call__(self, x):

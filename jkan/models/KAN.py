@@ -3,6 +3,7 @@ from jax import numpy as jnp
 from flax import nnx
 
 from ..layers import get_layer
+from ..layers.utils import adam_transition
 
 from typing import Union, List
 
@@ -82,6 +83,39 @@ class KAN(nnx.Module):
 
             # Perform a forward pass to get the input for the next layer
             x = layer(x)
+
+    def extend_grids(self, x, G_new, optimizer=None):
+        """
+        Extend/refine all layer grids and project existing spline coefficients
+        onto the new bases.
+
+        This follows pykan's grid refinement idea in-place: each layer is
+        evaluated on the supplied samples, its grid is resized to ``G_new``,
+        and its basis coefficients are recomputed by least squares so the
+        represented edge functions are preserved as closely as possible on
+        those samples.
+
+        Args:
+            x (jnp.array):
+                Inputs for the first layer.
+            G_new (int):
+                New number of grid intervals.
+            optimizer:
+                Optional NNX Adam optimizer. When provided, its ``c_basis``
+                first- and second-moment arrays are interpolated to the new
+                coefficient shapes.
+        """
+
+        self.update_grids(x, G_new)
+
+        if optimizer is not None:
+            _, model_state = nnx.split(self)
+            adam_transition(optimizer.opt_state, model_state)
+
+    def refine_grids(self, x, G_new, optimizer=None):
+        """Alias for :meth:`extend_grids` using KAN refinement terminology."""
+
+        self.extend_grids(x, G_new, optimizer=optimizer)
 
     
     def __call__(self, x):

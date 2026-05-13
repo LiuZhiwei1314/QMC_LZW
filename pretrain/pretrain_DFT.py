@@ -4,7 +4,7 @@ from typing import Callable, Mapping, Optional, Sequence, Tuple
 
 from absl import logging
 import chex
-from lkan import qmc_types as networks
+import networks
 import jax
 from jax import numpy as jnp
 import optax

@@ -573,22 +573,16 @@ class ChebyshevLayer(nnx.Module):
             >>> output = layer(x_batch)
         """
         
-        batch = x.shape[0]
-        
         # Calculate basis activations
         Bi = self.basis(x) # (batch, n_in, D+1)
-        act = Bi.reshape(batch, -1) # (batch, n_in * (D+1))
 
         # Check if external_weights == True
         if self.c_ext is not None:
             act_w = self.c_basis[...] * self.c_ext[..., None] # (n_out, n_in, D+1)
         else:
             act_w = self.c_basis[...]
-        
-        # Calculate coefficients
-        act_w = act_w.reshape(self.n_out, -1) # (n_out, n_in * (D+1))
 
-        y = jnp.matmul(act, act_w.T) # (batch, n_out)
+        y = jnp.sum(Bi[:, None, :, :] * act_w[None, :, :, :], axis=(2, 3)) # (batch, n_out)
 
         # Check if there is a residual function
         if self.residual is not None:
@@ -596,7 +590,7 @@ class ChebyshevLayer(nnx.Module):
             res = self.residual(x) # (batch, n_in)
             # Multiply by trainable weights
             res_w = self.c_res[...] # (n_out, n_in)
-            full_res = jnp.matmul(res, res_w.T) # (batch, n_out)
+            full_res = jnp.sum(res[:, None, :] * res_w[None, :, :], axis=2) # (batch, n_out)
 
             y += full_res # (batch, n_out)
 

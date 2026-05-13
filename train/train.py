@@ -10,14 +10,15 @@ import numpy as np
 import optax
 from tqdm.auto import trange
 
-from hamiltonian import hamiltonian
-from initialization import electrons_initialization
+import hamiltonian
+import electrons_initialization
+import envelope
+import jastrow
+import networks
 from jkan.models import MultKAN
-from lkan.qmc_determinants import logdet_matmul
-from lkan.qmc_types import KANetsData
-from loss_function import loss as qmc_loss_functions
-from monte_carlo_step import VMCmcstep
-from optimizer.opt import make_opt_update_step, make_training_step
+import loss as qmc_loss_functions
+import vmcmc
+from opt import make_opt_update_step, make_training_step
 from train.pretrain_runner import PretrainRunner
 from train.training_io import RunManager
 
@@ -51,17 +52,12 @@ def _array_partitions(sizes):
 
 
 def _construct_input_features(pos: jnp.ndarray, atoms: jnp.ndarray, ndim: int = 3):
-    ae = jnp.reshape(pos, [-1, 1, ndim]) - atoms[None, ...]
-    ee = jnp.reshape(pos, [1, -1, ndim]) - jnp.reshape(pos, [-1, 1, ndim])
-    r_ae = jnp.linalg.norm(ae, axis=2, keepdims=True)
-    n = ee.shape[0]
-    r_ee = (jnp.linalg.norm(ee + jnp.eye(n)[..., None], axis=-1) * (1.0 - jnp.eye(n)))
-    return ae, ee, r_ae, r_ee[..., None]
+    return networks.construct_input_features(pos, atoms, ndim=ndim)
 
 
 @flax.struct.dataclass
 class RuntimeState:
-    data: KANetsData
+    data: networks.KANetsData
     key: Any
     mcmc_width: jnp.ndarray
     pmoves: np.ndarray
@@ -72,6 +68,8 @@ class VMCTrainer:
 
     def __init__(self, cfg: ml_collections.ConfigDict):
         self.cfg = cfg
+        self._mkan_graphdef = None
+        self._mkan_static_state = None
         self.run_manager = RunManager(cfg.output)
         self.run_manager.save_config(cfg)
         self._read_config()
@@ -108,19 +106,17 @@ class VMCTrainer:
         self.natoms = len(self.molecule)
 
         self.batch_size = int(cfg.batch_size)
-        self.nfeatures = int(cfg.nfeatures)
+        nfeatures = int(cfg.nfeatures)
         self.atoms = jnp.array([atom.coords for atom in self.molecule])
         self.charges = jnp.array([atom.charge for atom in self.molecule])
 
-        self.spins_list = [1] * self.electrons[0] + [-1] * self.electrons[1]
-        self.spins_jastrow = jnp.array(self.spins_list)
-        self.spins = jnp.array([self.spins_list])
+        spins = [1] * self.electrons[0] + [-1] * self.electrons[1]
+        self.spins = jnp.array([spins])
 
         self.g = jnp.array(cfg.g)
         self.k = jnp.array(cfg.k)
         self.layer_dims = jnp.array(cfg.layer_dims)
         self.grid_range = cfg.grid_range
-        self.grid_range_envelope = jnp.array(cfg.envelope.grid_range_envelope)
 
         self.seed = int(cfg.seed)
         self.seed_electrons_coords = int(cfg.seed_electrons_coords)
@@ -128,10 +124,8 @@ class VMCTrainer:
         self.core_electrons = cfg.core_electrons
 
         self.pretrain_method = str(cfg.get('pretrain_method', 'hf')).lower()
-        self.pretrain_basis = cfg.get('pretrain_basis', cfg.get('hf_basis', 'ccpvdz'))
-        self.pretrain_restricted = bool(
-            cfg.get('pretrain_restricted', cfg.get('hf_restricted', False))
-        )
+        self.pretrain_basis = cfg.get('pretrain_basis', 'ccpvdz')
+        self.pretrain_restricted = bool(cfg.get('pretrain_restricted', False))
         self.hf_states = int(cfg.get('hf_states', 0))
         self.hf_excitation_type = cfg.get('hf_excitation_type', 'ordered')
         self.dft_xc = cfg.get('dft_xc', 'pbe,pbe')
@@ -157,29 +151,21 @@ class VMCTrainer:
         self.run_pretrain = bool(cfg.run_pretrain)
         self.iterations = int(cfg.iterations)
 
-        self.chebyshev = bool(cfg.chebyshev)
-        self.spline = bool(cfg.spline)
-        self.add_residual = bool(cfg.add_residual)
         self.add_bias = bool(cfg.add_bias)
         self.external_weights = bool(cfg.external_weights)
-        self.envelope_chebyshev = bool(cfg.envelope_chebyshev)
-        self.envelope_spline = bool(cfg.envelope_spline)
         self.envelope_simple = bool(cfg.envelope_simple)
-        self.g_envelope = int(cfg.envelope.g_envelope)
-        self.k_envelope = int(cfg.envelope.k_envelope)
+        jastrow_cfg = cfg.get('jastrow', {})
+        self.jastrow_ee = bool(jastrow_cfg.get('ee', True))
 
         mkan_cfg = cfg.get('mkan', {})
-        self.mkan_layer_type = str(mkan_cfg.get(
-            'layer_type',
-            'chebyshev' if self.chebyshev else 'spline',
-        )).lower()
+        self.mkan_layer_type = str(mkan_cfg.get('layer_type', 'spline')).lower()
         self.mkan_mult_arity = mkan_cfg.get('mult_arity', 2)
         self.mkan_width = mkan_cfg.get('width', None)
         self.mkan_required_parameters = mkan_cfg.get('required_parameters', None)
         self.mkan_pretrain_phase_weight = float(mkan_cfg.get('pretrain_phase_weight', 1.0e-2))
         mkan_input_dim = mkan_cfg.get('input_dim', None)
         mkan_output_dim = mkan_cfg.get('output_dim', None)
-        self.mkan_input_dim = int(self.nfeatures if mkan_input_dim is None else mkan_input_dim)
+        self.mkan_input_dim = int(nfeatures if mkan_input_dim is None else mkan_input_dim)
         self.mkan_output_dim = int(
             ((2 * self.nelectrons) if self.complex_output else self.nelectrons)
             if mkan_output_dim is None else mkan_output_dim
@@ -195,13 +181,32 @@ class VMCTrainer:
         self.pmove_max = float(cfg.get('mcmc_pmove_max', 0.60))
         self.width_scale = float(cfg.get('mcmc_width_scale', 1.05))
 
+        grid_extension_cfg = cfg.get('grid_extension', {})
+        self.grid_extension_enabled = bool(grid_extension_cfg.get('enabled', False))
+        self.grid_extension_steps = tuple(int(v) for v in grid_extension_cfg.get('steps', ()))
+        self.grid_extension_g_values = tuple(int(v) for v in grid_extension_cfg.get('g_values', ()))
+        sample_size = grid_extension_cfg.get('sample_size', None)
+        self.grid_extension_sample_size = None if sample_size is None else int(sample_size)
+        if self.grid_extension_enabled:
+            if self.mkan_layer_type not in ('base', 'spline'):
+                raise ValueError(
+                    'grid_extension currently supports only base/spline MKAN layers. '
+                    f'Got layer_type={self.mkan_layer_type!r}.'
+                )
+            if len(self.grid_extension_steps) != len(self.grid_extension_g_values):
+                raise ValueError('grid_extension.steps and grid_extension.g_values must have the same length.')
+            if any(step <= 0 for step in self.grid_extension_steps):
+                raise ValueError('grid_extension.steps must contain positive training step numbers.')
+            if any(g <= 0 for g in self.grid_extension_g_values):
+                raise ValueError('grid_extension.g_values must contain positive grid sizes.')
+
     def _build_checkpoint_state(
         self,
         *,
         stage: str,
         step: int,
         params,
-        data: KANetsData,
+        data: networks.KANetsData,
         key,
         pretrain_opt_state=None,
         train_opt_state=None,
@@ -214,18 +219,36 @@ class VMCTrainer:
             'key': key,
             'pretrain_opt_state': pretrain_opt_state,
             'train_opt_state': train_opt_state,
+            'mkan_static_state': self._mkan_static_state,
         }
 
     def _build_networks(self):
         model_template = self._make_mkan_template()
-        graphdef, initial_params, static_state = nnx.split(model_template, nnx.Param, ...)
+        self._mkan_graphdef, initial_params, self._mkan_static_state = nnx.split(
+            model_template, nnx.Param, ...
+        )
+        active_spin_channels = networks.active_spin_channels(self.electrons)
+        envelope_output_dims = [self.nelectrons for _ in active_spin_channels]
+        envelope_params = (
+            envelope.init_isotropic_envelope(self.natoms, envelope_output_dims)
+            if self.envelope_simple
+            else None
+        )
+        same_spin_pairs, opposite_spin_pairs = jastrow.spin_pair_indices(self.electrons)
+        jastrow_params = jastrow.init_pade_ee_jastrow() if self.jastrow_ee else None
 
         def kan_init(key):
             del key
-            return initial_params
+            params = {'mkan': initial_params}
+            if envelope_params is not None:
+                params['envelope'] = envelope_params
+            if jastrow_params is not None:
+                params['jastrow_ee'] = jastrow_params
+            return params
 
         def apply_mkan(params, features):
-            model = nnx.merge(graphdef, params, static_state)
+            model_params = params['mkan'] if isinstance(params, dict) and 'mkan' in params else params
+            model = nnx.merge(self._mkan_graphdef, model_params, self._mkan_static_state)
             if features.shape[-1] != self.mkan_input_dim:
                 raise ValueError(
                     f'MKAN input dimension mismatch: got {features.shape[-1]}, '
@@ -253,6 +276,22 @@ class VMCTrainer:
             orbital_channels = [
                 channel for channel, spin in zip(orbital_channels, self.electrons) if spin > 0
             ]
+            if self.envelope_simple:
+                if not (isinstance(params, dict) and 'envelope' in params):
+                    raise ValueError('Missing envelope parameters for simple envelope.')
+                r_ae_channels = jnp.split(r_ae, spin_partitions, axis=0)
+                r_ae_channels = [
+                    channel for channel, spin in zip(r_ae_channels, self.electrons) if spin > 0
+                ]
+                orbital_channels = [
+                    channel * envelope.apply_isotropic_envelope(
+                        r_ae=r_ae_channel,
+                        **envelope_param,
+                    )
+                    for channel, r_ae_channel, envelope_param in zip(
+                        orbital_channels, r_ae_channels, params['envelope']
+                    )
+                ]
             shapes = [(spin, -1, self.nelectrons) for spin in active_spin_channels]
             orbital_channels = [
                 jnp.reshape(channel, shape)
@@ -266,7 +305,18 @@ class VMCTrainer:
 
         def signed_network(params, pos, spins, atoms, charges):
             determinant = orbitals_apply(params, pos, spins, atoms, charges)
-            return logdet_matmul(determinant)
+            phase, logmag = networks.logdet_matmul(determinant)
+            if self.jastrow_ee:
+                if not (isinstance(params, dict) and 'jastrow_ee' in params):
+                    raise ValueError('Missing Jastrow parameters for electron-electron Jastrow.')
+                _, _, _, r_ee = _construct_input_features(pos, atoms, ndim=3)
+                logmag = logmag + jastrow.apply_pade_ee_jastrow(
+                    r_ee,
+                    params['jastrow_ee'],
+                    same_spin_pairs,
+                    opposite_spin_pairs,
+                ) / self.nelectrons
+            return phase, logmag
 
         def logabs_network(params, pos, spins, atoms, charges):
             return signed_network(params, pos, spins, atoms, charges)[1]
@@ -281,7 +331,42 @@ class VMCTrainer:
         batch_log_network = jax.vmap(log_network, in_axes=(None, 0, None, None, None), out_axes=0)
         orbitals_vmap = jax.vmap(orbitals_apply, in_axes=(None, 0, None, None, None), out_axes=0)
 
-        return kan_init, signed_network, logabs_network, log_network, batch_network, batch_log_network, orbitals_vmap
+        def extend_mkan_grid(params, data, g_new: int):
+            if not (isinstance(params, dict) and 'mkan' in params):
+                raise ValueError('Grid extension requires trainer params with an mkan entry.')
+            samples = self._grid_extension_samples(data)
+            model = nnx.merge(self._mkan_graphdef, params['mkan'], self._mkan_static_state)
+            model.extend_grids(samples, int(g_new))
+            self._mkan_graphdef, mkan_params, self._mkan_static_state = nnx.split(
+                model, nnx.Param, ...
+            )
+            new_params = dict(params)
+            new_params['mkan'] = mkan_params
+            return new_params
+
+        return (
+            kan_init,
+            signed_network,
+            logabs_network,
+            log_network,
+            batch_network,
+            batch_log_network,
+            orbitals_vmap,
+            extend_mkan_grid,
+        )
+
+    def _grid_extension_samples(self, data: networks.KANetsData) -> jnp.ndarray:
+        positions = jnp.reshape(data.positions, (-1, self.nelectrons * 3))
+
+        def single_position_features(pos):
+            ae, _, r_ae, _ = _construct_input_features(pos, data.atoms, ndim=3)
+            return jnp.concatenate((r_ae, ae), axis=2).reshape(self.nelectrons, -1)
+
+        samples = jax.vmap(single_position_features)(positions)
+        samples = jnp.reshape(samples, (-1, self.mkan_input_dim))
+        if self.grid_extension_sample_size is not None:
+            samples = samples[:self.grid_extension_sample_size]
+        return samples
 
     def _make_mkan_template(self):
         if self.mkan_width is None:
@@ -358,6 +443,8 @@ class VMCTrainer:
             params = resume_state['params']
             data = resume_state['data']
             sharded_key = resume_state['key']
+            if resume_state.get('mkan_static_state') is not None:
+                self._mkan_static_state = resume_state['mkan_static_state']
             stage = resume_state.get('stage')
             if stage == 'pretrain':
                 pretrain_start_step = int(resume_state.get('step', 0))
@@ -377,7 +464,7 @@ class VMCTrainer:
                 init_width=self.init_width,
                 core_electrons=self.core_electrons,
             )
-            data = KANetsData(positions=pos, spins=self.spins, atoms=self.atoms, charges=self.charges)
+            data = networks.KANetsData(positions=pos, spins=self.spins, atoms=self.atoms, charges=self.charges)
 
         return params, data, sharded_key, pretrain_start_step, train_start_step, pretrain_opt_state, train_opt_state
 
@@ -414,7 +501,7 @@ class VMCTrainer:
         batch_signed_network = jax.vmap(
             signed_network, in_axes=(None, 0, None, None, None), out_axes=(0, 0)
         )
-        monte_carlo = VMCmcstep.make_mcmc_step(
+        monte_carlo = vmcmc.make_vmcmc_step(
             f=batch_signed_network,
             ndim=3,
             nelectrons=self.nelectrons,
@@ -437,7 +524,18 @@ class VMCTrainer:
             state = state.replace(opt_state=train_opt_state)
         return state
 
-    def _run_train_loop(self, *, train_start_step: int, runtime: RuntimeState, state: train_state.TrainState, step_fn):
+    def _run_train_loop(
+        self,
+        *,
+        train_start_step: int,
+        runtime: RuntimeState,
+        state: train_state.TrainState,
+        step_fn,
+        signed_network: Callable,
+        logabs_network: Callable,
+        log_network: Callable,
+        extend_mkan_grid: Callable,
+    ):
         initial_state = self._build_checkpoint_state(
             stage='train',
             step=train_start_step,
@@ -452,6 +550,11 @@ class VMCTrainer:
             jax.debug.print('sharded_key:{}', runtime.key)
 
         iterator: Any = trange(train_start_step, self.iterations, desc='Training', dynamic_ncols=True)
+        grid_extension_targets = (
+            dict(zip(self.grid_extension_steps, self.grid_extension_g_values))
+            if self.grid_extension_enabled
+            else {}
+        )
         for t in iterator:
             key, subkeys = jax.random.split(runtime.key, 2)
             data, params, opt_state, loss, aux_data, pmove = step_fn(
@@ -493,6 +596,16 @@ class VMCTrainer:
                     },
                 )
 
+            if step_id in grid_extension_targets:
+                g_new = grid_extension_targets[step_id]
+                params = extend_mkan_grid(state.params, data, g_new)
+                optimizer, step_fn = self._build_train_step(signed_network, logabs_network, log_network)
+                step = state.step
+                state = self._build_train_state(params, optimizer, train_opt_state=None)
+                state = state.replace(step=step)
+                iterator.write(f'Extended MKAN grid to G={g_new} at train step {step_id}.')
+                self.run_manager.log_scalars('train', step_id, {'grid_G': float(g_new)})
+
             checkpoint_state = self._build_checkpoint_state(
                 stage='train',
                 step=step_id,
@@ -516,6 +629,7 @@ class VMCTrainer:
                 batch_network,
                 batch_log_network,
                 orbitals_vmap,
+                extend_mkan_grid,
             ) = self._build_networks()
             params, data, sharded_key, pretrain_start_step, train_start_step, pretrain_opt_state, train_opt_state = (
                 self._initialize_params_and_data(kan_init)
@@ -544,7 +658,16 @@ class VMCTrainer:
                 mcmc_width=jnp.asarray(self.mcmc_width),
                 pmoves=np.zeros((self.adapt_frequency,), dtype=np.float32),
             )
-            self._run_train_loop(train_start_step=train_start_step, runtime=runtime, state=state, step_fn=step_fn)
+            self._run_train_loop(
+                train_start_step=train_start_step,
+                runtime=runtime,
+                state=state,
+                step_fn=step_fn,
+                signed_network=signed_network,
+                logabs_network=logabs_network,
+                log_network=log_network,
+                extend_mkan_grid=extend_mkan_grid,
+            )
         finally:
             self.run_manager.close()
 

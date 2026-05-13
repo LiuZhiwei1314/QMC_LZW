@@ -4,7 +4,7 @@ import chex
 import jax
 from jax import lax
 from jax import numpy as jnp
-from lkan import qmc_types as networks
+import networks
 import constants
 from tools.utils import utils
 
@@ -52,7 +52,7 @@ def _log_prob_diag_gaussian(
     return -0.5 * jnp.sum(z * z, axis=-1) - jnp.sum(jnp.log(sigma), axis=-1)
 
 
-def _mcmc_impl(
+def _vmcmc_impl(
     f,
     ndim: int,
     nelectrons: int,
@@ -153,24 +153,24 @@ def _mcmc_impl(
     return new_data, key, pmove
 
 
-def make_mcmc_step(
+def make_vmcmc_step(
     f,
     ndim: int,
     nelectrons: int,
     steps: int = 1,
 ):
-    """Builds a training-loop compatible MCMC step: (params, data, key, width)->(new_data, pmove)."""
+    """Builds a training-loop compatible VMCMC step: (params, data, key, width)->(new_data, pmove)."""
     if steps <= 0:
         raise ValueError('steps must be positive.')
 
-    def mcmc_step(
+    def vmcmc_step(
         params: networks.ParamTree,
         data: networks.KANetsData,
         key: chex.PRNGKey,
         width,
     ):
         width = jnp.maximum(jnp.asarray(width), jnp.asarray(1e-12))
-        new_data, _, pmove = _mcmc_impl(
+        new_data, _, pmove = _vmcmc_impl(
             f=f,
             ndim=ndim,
             nelectrons=nelectrons,
@@ -182,4 +182,4 @@ def make_mcmc_step(
         )
         return new_data, pmove
 
-    return jax.jit(mcmc_step)
+    return jax.jit(vmcmc_step)

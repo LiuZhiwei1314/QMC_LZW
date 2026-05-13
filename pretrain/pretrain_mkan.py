@@ -8,8 +8,8 @@ import jax.numpy as jnp
 import optax
 from tqdm.auto import trange
 
-from lkan import qmc_types as networks
-from monte_carlo_step import VMCmcstep
+import networks
+import vmcmc
 
 
 def make_pretrain_step(
@@ -54,7 +54,7 @@ def make_pretrain_step(
     phase = jnp.ones_like(logmag)
     return phase, logmag
 
-  mcmc_step = VMCmcstep.make_mcmc_step(
+  mcmc_step = vmcmc.make_vmcmc_step(
       f=mcmc_signed_network,
       ndim=3,
       nelectrons=sum(electrons),

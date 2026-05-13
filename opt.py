@@ -1,13 +1,13 @@
 import optax
 import jax.numpy as jnp
-from lkan import qmc_types as networks
+import networks
 from typing import Any, Union, Tuple, Optional
 import chex
 import jax
 import constants
 import functools
 from typing_extensions import Protocol
-from loss_function import loss as qmc_loss_functions
+import loss as qmc_loss_functions
 
 
 OptimizerState = Union[optax.OptState, Any]
@@ -66,7 +66,7 @@ class Step(Protocol):
       params: network parameters.
       state: optimizer internal state.
       key: JAX RNG state.
-      mcmc_width: width of MCMC move proposal. See mcmc.make_mcmc_step.
+      mcmc_width: width of MCMC move proposal. See vmcmc.make_vmcmc_step.
 
     Returns:
       Tuple of (data, params, state, loss, aux_data, pmove).

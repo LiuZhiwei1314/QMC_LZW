@@ -3,6 +3,7 @@ from jax import numpy as jnp
 from flax import nnx
 
 from ..layers import get_layer
+from ..layers.utils import adam_transition
 
 from typing import List, Sequence, Union
 
@@ -47,28 +48,30 @@ class MultKAN(nnx.Module):
             self.mult_homo = False
         self.mult_arity = mult_arity
 
-        self.layers = [
-            LayerClass(
-                n_in=self.width_in[i],
-                n_out=self.width_out[i + 1],
-                **required_parameters,
-                seed=seed + i,
-            )
-            for i in range(self.depth)
-        ]
+        self.layers = nnx.List(
+            [
+                LayerClass(
+                    n_in=self.width_in[i],
+                    n_out=self.width_out[i + 1],
+                    **required_parameters,
+                    seed=seed + i,
+                )
+                for i in range(self.depth)
+            ]
+        )
 
-        self.node_bias = [
-            nnx.Param(jnp.zeros((self.width_in[i + 1],))) for i in range(self.depth)
-        ]
-        self.node_scale = [
-            nnx.Param(jnp.ones((self.width_in[i + 1],))) for i in range(self.depth)
-        ]
-        self.subnode_bias = [
-            nnx.Param(jnp.zeros((self.width_out[i + 1],))) for i in range(self.depth)
-        ]
-        self.subnode_scale = [
-            nnx.Param(jnp.ones((self.width_out[i + 1],))) for i in range(self.depth)
-        ]
+        self.node_bias = nnx.List(
+            [nnx.Param(jnp.zeros((self.width_in[i + 1],))) for i in range(self.depth)]
+        )
+        self.node_scale = nnx.List(
+            [nnx.Param(jnp.ones((self.width_in[i + 1],))) for i in range(self.depth)]
+        )
+        self.subnode_bias = nnx.List(
+            [nnx.Param(jnp.zeros((self.width_out[i + 1],))) for i in range(self.depth)]
+        )
+        self.subnode_scale = nnx.List(
+            [nnx.Param(jnp.ones((self.width_out[i + 1],))) for i in range(self.depth)]
+        )
 
     def _arity_list_for_width(self, width_idx: int) -> List[int]:
         dim_mult = self.width[width_idx][1]
@@ -123,6 +126,23 @@ class MultKAN(nnx.Module):
             x = self.subnode_scale[idx][...][None, :] * x + self.subnode_bias[idx][...][None, :]
             x = self._apply_multiplication(x, idx)
             x = self.node_scale[idx][...][None, :] * x + self.node_bias[idx][...][None, :]
+
+    def extend_grids(self, x, G_new, optimizer=None):
+        """
+        Extend/refine all spline grids and transfer edge functions to the new
+        bases with the same least-squares projection used by each layer.
+        """
+
+        self.update_grids(x, G_new)
+
+        if optimizer is not None:
+            _, model_state = nnx.split(self)
+            adam_transition(optimizer.opt_state, model_state)
+
+    def refine_grids(self, x, G_new, optimizer=None):
+        """Alias for :meth:`extend_grids` using KAN refinement terminology."""
+
+        self.extend_grids(x, G_new, optimizer=optimizer)
 
     def __call__(self, x):
         for idx, layer in enumerate(self.layers):

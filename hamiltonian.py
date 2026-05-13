@@ -1,12 +1,14 @@
 from typing import Any, Callable, Optional, Sequence, Tuple, Union, Protocol, cast
 import chex
-from lkan import qmc_types as networks
+import networks
 from tools.utils import utils
 import jax
 from jax import lax
 import jax.numpy as jnp
 import numpy as np
 import folx
+
+
 
 
 Array = Union[jnp.ndarray, np.ndarray]
