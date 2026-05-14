@@ -298,7 +298,7 @@ def pretrain_hartree_fock(
       optimizer.update,
       electrons=electrons,
       batch_size=batch_size,
-      full_det=True,
+      full_det=False,
       scf_fraction=scf_fraction,
       states=states,
       mcmc_steps=mcmc_steps,

@@ -5,13 +5,13 @@ from tools.utils import system
 def default() -> ml_collections.ConfigDict:
 
     cfg = ml_collections.ConfigDict({
-        'batch_size': 16,
-        'layer_dims': [4, 20, 20],
+        'batch_size': 64,
+        'layer_dims': [4, 16, 16],
         'g': [10, 10, 10, 10],
         'k': [3, 3, 3, 3],
         'grid_range': [[0, 2], [0, 2], [0, 2], [0, 2]],
-        'iterations': 100,
-        'preiterations': 100,
+        'iterations': 300,
+        'preiterations': 1000,
         'run_pretrain': True,
         'seed': 42,
         'seed_electrons_coords': 22,
@@ -27,7 +27,7 @@ def default() -> ml_collections.ConfigDict:
         'scf_fraction': 0.0,
         'nfeatures': 4,
         'mcmc_steps': 10,
-        'mcmc_width': 0.1,
+        'mcmc_width': 0.005,
         'pretrain_mcmc_steps': 1,
         'pretrain_mcmc_width': 0.02,
         'clip_local_energy': 5.0,
@@ -36,7 +36,7 @@ def default() -> ml_collections.ConfigDict:
         'laplacian_method': 'default',
         't_init': 0,
         'debug': False,
-        'learning_rate': 0.005,
+        'learning_rate': 0.0005,
         'learning_rate_decay': 10000.0,
         'envelope_simple': True,
         'envelope_type': 'isotropic', #isotropic, chebyshev
@@ -63,8 +63,8 @@ def default() -> ml_collections.ConfigDict:
             'pretrain_phase_weight': 1.0e-2,
         },
         'grid_extension': {
-            'enabled': True,
-            'steps': [50],
+            'enabled': False,
+            'steps': [500],
             'g_values': [20],
             'sample_size': None,
         },
@@ -77,9 +77,9 @@ def default() -> ml_collections.ConfigDict:
             'type': 'ferminet', #pade, ferminet
         },
         'output': {
-            'root_dir': 'outputs/current',
-            'checkpoint_every': 10,
-            'metrics_every': 1,
+            'root_dir': 'outputs/carbon_spinblock_test_001',
+            'checkpoint_every': 50,
+            'metrics_every': 5,
             'resume': False,
             'enable_tensorboard': True,
         },

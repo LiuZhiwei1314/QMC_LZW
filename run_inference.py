@@ -175,9 +175,15 @@ def _build_network(cfg: ml_collections.ConfigDict):
             orbital_values = orbital_values[..., :nelectrons]
 
         spin_partitions = _array_partitions(electrons)
-        orbital_channels = jnp.split(orbital_values, spin_partitions, axis=0)
+        orbital_row_channels = jnp.split(orbital_values, spin_partitions, axis=0)
         orbital_channels = [
-            channel for channel, spin in zip(orbital_channels, electrons) if spin > 0
+            channel[:, start : start + spin]
+            for channel, spin, start in zip(
+                orbital_row_channels,
+                electrons,
+                (0, int(electrons[0])),
+            )
+            if spin > 0
         ]
         if bool(cfg.envelope_simple):
             r_ae_channels = jnp.split(r_ae, spin_partitions, axis=0)
@@ -198,13 +204,13 @@ def _build_network(cfg: ml_collections.ConfigDict):
                 )
             ]
 
-        shapes = [(spin, -1, nelectrons) for spin in active_spin_channels]
+        shapes = [(spin, -1, spin) for spin in active_spin_channels]
         orbital_channels = [
             jnp.reshape(channel, shape)
             for channel, shape in zip(orbital_channels, shapes)
         ]
         orbital_channels = [jnp.transpose(channel, (1, 0, 2)) for channel in orbital_channels]
-        return [jnp.concatenate(orbital_channels, axis=1)]
+        return orbital_channels
 
     def signed_network(params, pos, spins_, atoms_, charges_):
         determinant = orbitals_apply(params, pos, spins_, atoms_, charges_)
