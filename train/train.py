@@ -154,8 +154,11 @@ class VMCTrainer:
         self.add_bias = bool(cfg.add_bias)
         self.external_weights = bool(cfg.external_weights)
         self.envelope_simple = bool(cfg.envelope_simple)
+        self.envelope_type = str(cfg.get('envelope_type', 'isotropic')).lower()
+        self.envelope_degree = int(cfg.get('envelope_degree', 5))
         jastrow_cfg = cfg.get('jastrow', {})
         self.jastrow_ee = bool(jastrow_cfg.get('ee', True))
+        self.jastrow_type = str(jastrow_cfg.get('type', 'pade')).lower()
 
         mkan_cfg = cfg.get('mkan', {})
         self.mkan_layer_type = str(mkan_cfg.get('layer_type', 'spline')).lower()
@@ -229,13 +232,31 @@ class VMCTrainer:
         )
         active_spin_channels = networks.active_spin_channels(self.electrons)
         envelope_output_dims = [self.nelectrons for _ in active_spin_channels]
-        envelope_params = (
-            envelope.init_isotropic_envelope(self.natoms, envelope_output_dims)
-            if self.envelope_simple
-            else None
-        )
-        same_spin_pairs, opposite_spin_pairs = jastrow.spin_pair_indices(self.electrons)
-        jastrow_params = jastrow.init_pade_ee_jastrow() if self.jastrow_ee else None
+        envelope_params = None
+        if self.envelope_simple:
+            if self.envelope_type == 'isotropic':
+                envelope_params = envelope.init_isotropic_envelope(
+                    self.natoms, envelope_output_dims
+                )
+            elif self.envelope_type == 'chebyshev':
+                envelope_params = envelope.init_chebyshev_envelope(
+                    self.natoms,
+                    envelope_output_dims,
+                    degree=self.envelope_degree,
+                )
+            else:
+                raise ValueError(f'Unsupported envelope_type={self.envelope_type!r}.')
+        if self.jastrow_type == 'pade':
+            same_spin_pairs, opposite_spin_pairs = jastrow.spin_pair_indices(self.electrons)
+            init_jastrow = jastrow.init_pade_ee_jastrow
+            apply_jastrow = jastrow.apply_pade_ee_jastrow
+        elif self.jastrow_type == 'ferminet':
+            same_spin_pairs, opposite_spin_pairs = jastrow.spin_pair_indices_or_empty(self.electrons)
+            init_jastrow = jastrow.init_ferminet_ee_jastrow
+            apply_jastrow = jastrow.apply_ferminet_ee_jastrow
+        else:
+            raise ValueError(f'Unsupported jastrow.type={self.jastrow_type!r}.')
+        jastrow_params = init_jastrow() if self.jastrow_ee else None
 
         def kan_init(key):
             del key
@@ -283,11 +304,13 @@ class VMCTrainer:
                 r_ae_channels = [
                     channel for channel, spin in zip(r_ae_channels, self.electrons) if spin > 0
                 ]
+                apply_envelope = (
+                    envelope.apply_chebyshev_envelope
+                    if self.envelope_type == 'chebyshev'
+                    else envelope.apply_isotropic_envelope
+                )
                 orbital_channels = [
-                    channel * envelope.apply_isotropic_envelope(
-                        r_ae=r_ae_channel,
-                        **envelope_param,
-                    )
+                    channel * apply_envelope(r_ae=r_ae_channel, **envelope_param)
                     for channel, r_ae_channel, envelope_param in zip(
                         orbital_channels, r_ae_channels, params['envelope']
                     )
@@ -310,12 +333,12 @@ class VMCTrainer:
                 if not (isinstance(params, dict) and 'jastrow_ee' in params):
                     raise ValueError('Missing Jastrow parameters for electron-electron Jastrow.')
                 _, _, _, r_ee = _construct_input_features(pos, atoms, ndim=3)
-                logmag = logmag + jastrow.apply_pade_ee_jastrow(
+                logmag = logmag + apply_jastrow(
                     r_ee,
                     params['jastrow_ee'],
                     same_spin_pairs,
                     opposite_spin_pairs,
-                ) / self.nelectrons
+                )
             return phase, logmag
 
         def logabs_network(params, pos, spins, atoms, charges):

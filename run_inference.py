@@ -145,7 +145,15 @@ def _build_network(cfg: ml_collections.ConfigDict):
         seed=int(cfg.seed),
     )
     graphdef, _, static_state = nnx.split(model_template, nnx.Param, ...)
-    same_spin_pairs, opposite_spin_pairs = jastrow.spin_pair_indices(electrons)
+    jastrow_type = str(cfg.get('jastrow', {}).get('type', 'pade')).lower()
+    if jastrow_type == 'pade':
+        same_spin_pairs, opposite_spin_pairs = jastrow.spin_pair_indices(electrons)
+        apply_jastrow = jastrow.apply_pade_ee_jastrow
+    elif jastrow_type == 'ferminet':
+        same_spin_pairs, opposite_spin_pairs = jastrow.spin_pair_indices_or_empty(electrons)
+        apply_jastrow = jastrow.apply_ferminet_ee_jastrow
+    else:
+        raise ValueError(f'Unsupported jastrow.type={jastrow_type!r}.')
     active_spin_channels = networks.active_spin_channels(electrons)
 
     def apply_mkan(params, features):
@@ -176,11 +184,15 @@ def _build_network(cfg: ml_collections.ConfigDict):
             r_ae_channels = [
                 channel for channel, spin in zip(r_ae_channels, electrons) if spin > 0
             ]
+            envelope_type = str(cfg.get('envelope_type', 'isotropic')).lower()
+            if envelope_type == 'isotropic':
+                apply_envelope = envelope.apply_isotropic_envelope
+            elif envelope_type == 'chebyshev':
+                apply_envelope = envelope.apply_chebyshev_envelope
+            else:
+                raise ValueError(f'Unsupported envelope_type={envelope_type!r}.')
             orbital_channels = [
-                channel * envelope.apply_isotropic_envelope(
-                    r_ae=r_ae_channel,
-                    **envelope_param,
-                )
+                channel * apply_envelope(r_ae=r_ae_channel, **envelope_param)
                 for channel, r_ae_channel, envelope_param in zip(
                     orbital_channels, r_ae_channels, params['envelope']
                 )
@@ -199,12 +211,12 @@ def _build_network(cfg: ml_collections.ConfigDict):
         phase, logmag = networks.logdet_matmul(determinant)
         if bool(cfg.get('jastrow', {}).get('ee', True)):
             _, _, _, r_ee = networks.construct_input_features(pos, atoms_, ndim=3)
-            logmag = logmag + jastrow.apply_pade_ee_jastrow(
+            logmag = logmag + apply_jastrow(
                 r_ee,
                 params['jastrow_ee'],
                 same_spin_pairs,
                 opposite_spin_pairs,
-            ) / nelectrons
+            )
         return phase, logmag
 
     return signed_network, orbitals_apply, atoms, charges, spins, electrons

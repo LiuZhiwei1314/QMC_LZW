@@ -39,6 +39,8 @@ def default() -> ml_collections.ConfigDict:
         'learning_rate': 0.005,
         'learning_rate_decay': 10000.0,
         'envelope_simple': True,
+        'envelope_type': 'isotropic', #isotropic, chebyshev
+        'envelope_degree': 5,
         'add_bias': True,
         'external_weights': True,
         'mkan': {
@@ -72,6 +74,7 @@ def default() -> ml_collections.ConfigDict:
         },
         'jastrow': {
             'ee': True,
+            'type': 'ferminet', #pade, ferminet
         },
         'output': {
             'root_dir': 'outputs/current',
