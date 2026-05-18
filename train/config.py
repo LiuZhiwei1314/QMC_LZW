@@ -5,13 +5,13 @@ from tools.utils import system
 def default() -> ml_collections.ConfigDict:
 
     cfg = ml_collections.ConfigDict({
-        'batch_size': 64,
+        'batch_size': 512,
         'layer_dims': [4, 16, 16],
         'g': [10, 10, 10, 10],
         'k': [3, 3, 3, 3],
         'grid_range': [[0, 2], [0, 2], [0, 2], [0, 2]],
-        'iterations': 300,
-        'preiterations': 1000,
+        'iterations': 300000,
+        'preiterations': 10000,
         'run_pretrain': True,
         'seed': 42,
         'seed_electrons_coords': 22,
@@ -26,18 +26,19 @@ def default() -> ml_collections.ConfigDict:
         'dft_grid_level': 3,
         'scf_fraction': 0.0,
         'nfeatures': 4,
-        'mcmc_steps': 10,
+        'mcmc_steps': 30,
         'mcmc_width': 0.005,
         'pretrain_mcmc_steps': 1,
         'pretrain_mcmc_width': 0.02,
         'clip_local_energy': 5.0,
         'use_scan': False,
         'complex_output': False,
+        'full_det': False,  # True: det(NxN); False: det(alpha) * det(beta)
         'laplacian_method': 'default',
         't_init': 0,
         'debug': False,
-        'learning_rate': 0.0005,
-        'learning_rate_decay': 10000.0,
+        'learning_rate': 0.00004,
+        'learning_rate_decay': 20000.0,
         'envelope_simple': True,
         'envelope_type': 'isotropic', #isotropic, chebyshev
         'envelope_degree': 5,
@@ -70,17 +71,17 @@ def default() -> ml_collections.ConfigDict:
         },
         'system': {
             'molecule': [system.Atom('C', (0, 0, 0))],
-            'electrons': (3, 3),
+            'electrons': (4, 2),
         },
         'jastrow': {
             'ee': True,
             'type': 'ferminet', #pade, ferminet
         },
         'output': {
-            'root_dir': 'outputs/carbon_spinblock_test_001',
+            'root_dir': 'outputs/carbon_spinblock_test_LZW5182009',
             'checkpoint_every': 50,
             'metrics_every': 5,
-            'resume': False,
+            'resume': True,
             'enable_tensorboard': True,
         },
     })

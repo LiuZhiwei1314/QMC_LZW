@@ -30,6 +30,7 @@ class PretrainRunner:
         batch_size: int,
         pretrain_mcmc_steps: int,
         pretrain_mcmc_width: float,
+        full_det: bool,
         debug: bool,
         scalar_pretrain: bool = False,
         phase_weight: float = 1.0e-2,
@@ -57,6 +58,7 @@ class PretrainRunner:
         self.batch_size = batch_size
         self.pretrain_mcmc_steps = pretrain_mcmc_steps
         self.pretrain_mcmc_width = pretrain_mcmc_width
+        self.full_det = full_det
         self.debug = debug
         self.scalar_pretrain = scalar_pretrain
         self.phase_weight = phase_weight
@@ -68,6 +70,7 @@ class PretrainRunner:
         data,
         sharded_key,
         pretrain_start_step: int,
+        train_start_step: int,
         train_opt_state,
         pretrain_opt_state,
         batch_network,
@@ -81,7 +84,7 @@ class PretrainRunner:
             and pretrain_start_step < self.preiterations
         )
         if not needs_pretrain:
-            return params, data, sharded_key, pretrain_opt_state, t_init
+            return params, data, sharded_key, pretrain_opt_state, train_start_step
 
         def log_pretrain(step: int, loss_value: float) -> None:
             if self.run_manager.should_log(step, self.preiterations):
@@ -159,6 +162,7 @@ class PretrainRunner:
                     checkpoint_callback=checkpoint_pretrain,
                     scf_fraction=self.scf_fraction,
                     states=self.hf_states,
+                    full_det=self.full_det,
                     mcmc_steps=self.pretrain_mcmc_steps,
                     mcmc_width=self.pretrain_mcmc_width,
                     start_iteration=pretrain_start_step,
@@ -225,6 +229,7 @@ class PretrainRunner:
                     logger=log_pretrain,
                     checkpoint_callback=checkpoint_pretrain,
                     scf_fraction=self.scf_fraction,
+                    full_det=self.full_det,
                     mcmc_steps=self.pretrain_mcmc_steps,
                     mcmc_width=self.pretrain_mcmc_width,
                     start_iteration=pretrain_start_step,

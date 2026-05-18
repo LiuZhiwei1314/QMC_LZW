@@ -155,6 +155,7 @@ def _build_network(cfg: ml_collections.ConfigDict):
     else:
         raise ValueError(f'Unsupported jastrow.type={jastrow_type!r}.')
     active_spin_channels = networks.active_spin_channels(electrons)
+    full_det = bool(cfg.get('full_det', True))
 
     def apply_mkan(params, features):
         model_params = params['mkan'] if isinstance(params, dict) and 'mkan' in params else params
@@ -176,15 +177,20 @@ def _build_network(cfg: ml_collections.ConfigDict):
 
         spin_partitions = _array_partitions(electrons)
         orbital_row_channels = jnp.split(orbital_values, spin_partitions, axis=0)
-        orbital_channels = [
-            channel[:, start : start + spin]
-            for channel, spin, start in zip(
-                orbital_row_channels,
-                electrons,
-                (0, int(electrons[0])),
-            )
-            if spin > 0
-        ]
+        if full_det:
+            orbital_channels = [
+                channel for channel, spin in zip(orbital_row_channels, electrons) if spin > 0
+            ]
+        else:
+            orbital_channels = [
+                channel[:, start : start + spin]
+                for channel, spin, start in zip(
+                    orbital_row_channels,
+                    electrons,
+                    (0, int(electrons[0])),
+                )
+                if spin > 0
+            ]
         if bool(cfg.envelope_simple):
             r_ae_channels = jnp.split(r_ae, spin_partitions, axis=0)
             r_ae_channels = [
@@ -204,12 +210,17 @@ def _build_network(cfg: ml_collections.ConfigDict):
                 )
             ]
 
-        shapes = [(spin, -1, spin) for spin in active_spin_channels]
+        shapes = [
+            (spin, -1, nelectrons if full_det else spin)
+            for spin in active_spin_channels
+        ]
         orbital_channels = [
             jnp.reshape(channel, shape)
             for channel, shape in zip(orbital_channels, shapes)
         ]
         orbital_channels = [jnp.transpose(channel, (1, 0, 2)) for channel in orbital_channels]
+        if full_det:
+            return [jnp.concatenate(orbital_channels, axis=1)]
         return orbital_channels
 
     def signed_network(params, pos, spins_, atoms_, charges_):

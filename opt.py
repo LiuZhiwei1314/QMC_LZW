@@ -170,4 +170,4 @@ def make_training_step(
                                lambda: new_state)
     return data, new_params, new_state, loss, aux_data, pmove
 
-  return step
+  return jax.jit(step)

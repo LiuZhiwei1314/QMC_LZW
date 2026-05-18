@@ -93,6 +93,7 @@ class VMCTrainer:
             batch_size=self.batch_size,
             pretrain_mcmc_steps=self.pretrain_mcmc_steps,
             pretrain_mcmc_width=self.pretrain_mcmc_width,
+            full_det=self.full_det,
             debug=self.debug,
             scalar_pretrain=False,
             phase_weight=self.mkan_pretrain_phase_weight,
@@ -140,6 +141,7 @@ class VMCTrainer:
         self.clip_local_energy = float(cfg.clip_local_energy)
         self.use_scan = bool(cfg.use_scan)
         self.complex_output = bool(cfg.complex_output)
+        self.full_det = bool(cfg.get('full_det', True))
         self.laplacian_method = cfg.laplacian_method
         self.scf_fraction = float(cfg.scf_fraction)
         self.t_init = int(cfg.t_init)
@@ -231,7 +233,10 @@ class VMCTrainer:
             model_template, nnx.Param, ...
         )
         active_spin_channels = networks.active_spin_channels(self.electrons)
-        envelope_output_dims = active_spin_channels
+        envelope_output_dims = [
+            self.nelectrons if self.full_det else spin
+            for spin in active_spin_channels
+        ]
         envelope_params = None
         if self.envelope_simple:
             if self.envelope_type == 'isotropic':
@@ -294,15 +299,22 @@ class VMCTrainer:
             spin_partitions = _array_partitions(self.electrons)
             orbital_row_channels = jnp.split(orbital_values, spin_partitions, axis=0)
             active_spin_channels = [spin for spin in self.electrons if spin > 0]
-            orbital_channels = [
-                channel[:, start : start + spin]
-                for channel, spin, start in zip(
-                    orbital_row_channels,
-                    self.electrons,
-                    (0, int(self.electrons[0])),
-                )
-                if spin > 0
-            ]
+            if self.full_det:
+                orbital_channels = [
+                    channel
+                    for channel, spin in zip(orbital_row_channels, self.electrons)
+                    if spin > 0
+                ]
+            else:
+                orbital_channels = [
+                    channel[:, start : start + spin]
+                    for channel, spin, start in zip(
+                        orbital_row_channels,
+                        self.electrons,
+                        (0, int(self.electrons[0])),
+                    )
+                    if spin > 0
+                ]
             if self.envelope_simple:
                 if not (isinstance(params, dict) and 'envelope' in params):
                     raise ValueError('Missing envelope parameters for simple envelope.')
@@ -321,7 +333,10 @@ class VMCTrainer:
                         orbital_channels, r_ae_channels, params['envelope']
                     )
                 ]
-            shapes = [(spin, -1, spin) for spin in active_spin_channels]
+            shapes = [
+                (spin, -1, self.nelectrons if self.full_det else spin)
+                for spin in active_spin_channels
+            ]
             orbital_channels = [
                 jnp.reshape(channel, shape)
                 for channel, shape in zip(orbital_channels, shapes)
@@ -330,6 +345,8 @@ class VMCTrainer:
                 jnp.transpose(channel, (1, 0, 2))
                 for channel in orbital_channels
             ]
+            if self.full_det:
+                return [jnp.concatenate(orbital_channels, axis=1)]
             return orbital_channels
 
         def signed_network(params, pos, spins, atoms, charges):
@@ -499,7 +516,7 @@ class VMCTrainer:
 
     def _build_optimizer(self):
         def learning_rate_schedule(t_: jnp.ndarray) -> jnp.ndarray:
-            return self.learning_rate * jnp.power((1.0 / (1.0 + (t_ / 1.0))), self.learning_rate_decay)
+            return self.learning_rate / (1.0 + t_ / self.learning_rate_decay)
 
         return optax.chain(
             optax.scale_by_adam(b1=0.9, b2=0.999, eps=1e-6),
@@ -669,6 +686,7 @@ class VMCTrainer:
                 data=data,
                 sharded_key=sharded_key,
                 pretrain_start_step=pretrain_start_step,
+                train_start_step=train_start_step,
                 train_opt_state=train_opt_state,
                 pretrain_opt_state=pretrain_opt_state,
                 batch_network=batch_network,
