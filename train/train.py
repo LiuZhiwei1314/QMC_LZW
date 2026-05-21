@@ -155,7 +155,7 @@ class VMCTrainer:
 
         self.add_bias = bool(cfg.add_bias)
         self.external_weights = bool(cfg.external_weights)
-        self.envelope_simple = bool(cfg.envelope_simple)
+        self.envelope_on = bool(cfg.envelope_on)
         self.envelope_type = str(cfg.get('envelope_type', 'isotropic')).lower()
         self.envelope_degree = int(cfg.get('envelope_degree', 5))
         jastrow_cfg = cfg.get('jastrow', {})
@@ -238,7 +238,7 @@ class VMCTrainer:
             for spin in active_spin_channels
         ]
         envelope_params = None
-        if self.envelope_simple:
+        if self.envelope_on:
             if self.envelope_type == 'isotropic':
                 envelope_params = envelope.init_isotropic_envelope(
                     self.natoms, envelope_output_dims
@@ -315,7 +315,7 @@ class VMCTrainer:
                     )
                     if spin > 0
                 ]
-            if self.envelope_simple:
+            if self.envelope_on:
                 if not (isinstance(params, dict) and 'envelope' in params):
                     raise ValueError('Missing envelope parameters for simple envelope.')
                 r_ae_channels = jnp.split(r_ae, spin_partitions, axis=0)

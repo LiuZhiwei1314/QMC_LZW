@@ -39,7 +39,7 @@ def default() -> ml_collections.ConfigDict:
         'debug': False,
         'learning_rate': 0.00004,
         'learning_rate_decay': 20000.0,
-        'envelope_simple': True,
+        'envelope_on': True,
         'envelope_type': 'isotropic', #isotropic, chebyshev
         'envelope_degree': 5,
         'add_bias': True,
@@ -78,7 +78,7 @@ def default() -> ml_collections.ConfigDict:
             'type': 'ferminet', #pade, ferminet
         },
         'output': {
-            'root_dir': 'outputs/carbon_spinblock_test_LZW5182009',
+            'root_dir': 'outputs/carbon_spinblock_test_LZW5182100',
             'checkpoint_every': 50,
             'metrics_every': 5,
             'resume': True,

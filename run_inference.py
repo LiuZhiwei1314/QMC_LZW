@@ -191,7 +191,7 @@ def _build_network(cfg: ml_collections.ConfigDict):
                 )
                 if spin > 0
             ]
-        if bool(cfg.envelope_simple):
+        if bool(cfg.envelope_on):
             r_ae_channels = jnp.split(r_ae, spin_partitions, axis=0)
             r_ae_channels = [
                 channel for channel, spin in zip(r_ae_channels, electrons) if spin > 0
